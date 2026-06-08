@@ -4,6 +4,8 @@
 
 Use a shared Expo / React Native app for iOS, Android, and web. This gives us a single product surface during free testing while still keeping a credible path to App Store and Play Store distribution.
 
+Decision: SeaDays will continue with Expo / React Native for the app. The Flutter branch is useful as a product/UI prototype, but the source-of-truth foundation should remain the API-first Expo/FastAPI/Supabase architecture.
+
 Use a separate API backend rather than relying entirely on a hosted backend-as-a-service. The domain will eventually need regulatory logic, exports, audit history, billing entitlements, and possible organization workflows. Owning the backend keeps those boundaries clean.
 
 Render, Supabase, and Cloudflare R2 are a good fit for the first serious version:

@@ -55,6 +55,10 @@ Scaffold the app and API so the first working slice can be: create vessel, log t
 
 See [Stand-Up Todo](standup-todo.md) for the implementation checklist.
 
+## App Stack Decision
+
+Use Expo / React Native for iOS, Android, and web. Keep the backend API as the policy boundary for core records, audit history, credential calculations, exports, and subscriptions.
+
 ## Infrastructure Timing
 
 Create Supabase and Render staging after the local API has vessel and trip CRUD, audit events, and the initial migration stabilized. Do this before implementing real mobile auth, offline sync, and tester distribution, because those features need hosted Supabase Auth/Postgres behavior.

@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "SeaDays",
+    "slug": "seadays",
+    "scheme": "seadays",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.seadays.app"
+    },
+    "android": {
+      "package": "com.seadays.app"
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "single"
+    },
+    "plugins": [
+      "expo-router"
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
