@@ -37,6 +37,7 @@ Logging sea time should be fast, offline-capable, and organized around the way m
 - [Development](docs/development.md)
 - [Infrastructure](docs/infrastructure.md)
 - [Environment Setup](docs/environment-setup.md)
+- [Staging Launch Plan](docs/staging-launch-plan.md)
 
 ## Repository Layout
 

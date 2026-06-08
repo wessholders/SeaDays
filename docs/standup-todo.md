@@ -104,9 +104,9 @@ This is the practical checklist for turning SeaDays from planning docs into a wo
 
 ## 10. Free Tester Launch
 
-- Deploy API to Render staging.
-- Connect staging API to Supabase staging project.
-- Connect staging API to R2 staging bucket.
+- [ ] Deploy API to Render staging.
+- [ ] Connect staging API to Supabase staging project.
+- [ ] Connect staging API to R2 staging bucket.
 - Deploy web build.
 - Prepare iOS/Android test distribution plan.
 - Create tester onboarding flow.
