@@ -1,0 +1,2 @@
+"""SeaDays API package."""
+
