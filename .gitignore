@@ -1,0 +1,23 @@
+GIS/
+
+# Flutter/Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+build/
+ios/Flutter/Generated.xcconfig
+ios/Flutter/flutter_export_environment.sh
+
+# Local env
+.env
+.env.*
+!.env.example
+keys.txt
+.local/
+*.local.env
+
+# IDE
+.idea/
+.vscode/
+*.iml
