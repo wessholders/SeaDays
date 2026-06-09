@@ -76,7 +76,7 @@ const supabase = hasSupabaseConfig
         storage: AsyncStorage,
         autoRefreshToken: true,
         persistSession: true,
-        detectSessionInUrl: false,
+        detectSessionInUrl: Platform.OS === 'web',
       },
     })
   : null;
@@ -332,6 +332,29 @@ function AuthScreen() {
   const [password, setPassword] = useState('');
   const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
   const [loading, setLoading] = useState(false);
+  const [authNotice, setAuthNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || typeof window === 'undefined') {
+      return;
+    }
+
+    const params = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+    const errorDescription = params.get('error_description');
+    const errorCode = params.get('error_code');
+
+    if (!errorDescription) {
+      return;
+    }
+
+    const readableMessage =
+      errorCode === 'otp_expired'
+        ? 'That confirmation link is expired or was already used. Resend the confirmation email and use the newest link.'
+        : errorDescription.replace(/\+/g, ' ');
+
+    setAuthNotice(readableMessage);
+    window.history.replaceState(null, document.title, window.location.pathname);
+  }, []);
 
   async function submit() {
     if (!email.trim() || password.length < 6 || !supabase) {
@@ -371,11 +394,41 @@ function AuthScreen() {
     }
   }
 
+  async function resendConfirmation() {
+    if (!email.trim() || !supabase) {
+      Alert.alert('Email needed', 'Enter the email address you used to create the account.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email: email.trim(),
+        options: {
+          emailRedirectTo: getEmailRedirectUrl(),
+        },
+      });
+
+      if (error) {
+        throw error;
+      }
+
+      setAuthNotice('Confirmation email sent. Use the newest email link; older links may no longer work.');
+      Alert.alert('Confirmation sent', 'Check your email for a fresh confirmation link.');
+    } catch (error) {
+      Alert.alert('Resend failed', error instanceof Error ? error.message : 'Try again.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.authPage}>
         <Text style={styles.title}>SeaDays</Text>
         <Text style={styles.authSubtitle}>{mode === 'sign-in' ? 'Sign in to continue' : 'Create your account'}</Text>
+        {authNotice ? <Text style={styles.authNotice}>{authNotice}</Text> : null}
         <LabeledInput label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" />
         <LabeledInput label="Password" value={password} onChangeText={setPassword} secureTextEntry />
         <Pressable style={styles.saveButton} onPress={submit} disabled={loading}>
@@ -389,6 +442,9 @@ function AuthScreen() {
           <Text style={styles.secondaryButtonText}>
             {mode === 'sign-in' ? 'Create a new account' : 'Use an existing account'}
           </Text>
+        </Pressable>
+        <Pressable style={styles.secondaryButton} onPress={resendConfirmation} disabled={loading}>
+          <Text style={styles.secondaryButtonText}>Resend confirmation email</Text>
         </Pressable>
       </View>
     </SafeAreaView>
@@ -697,6 +753,18 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     marginBottom: 18,
+  },
+  authNotice: {
+    backgroundColor: '#fff6df',
+    borderColor: '#e4c16d',
+    borderRadius: 8,
+    borderWidth: 1,
+    color: '#6e5510',
+    fontSize: 14,
+    fontWeight: '700',
+    lineHeight: 20,
+    marginBottom: 14,
+    padding: 12,
   },
   header: {
     alignItems: 'center',
