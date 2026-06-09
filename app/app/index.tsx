@@ -333,6 +333,7 @@ function AuthScreen() {
   const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
   const [loading, setLoading] = useState(false);
   const [authNotice, setAuthNotice] = useState<string | null>(null);
+  const [canResendConfirmation, setCanResendConfirmation] = useState(false);
 
   useEffect(() => {
     if (Platform.OS !== 'web' || typeof window === 'undefined') {
@@ -349,10 +350,12 @@ function AuthScreen() {
 
     const readableMessage =
       errorCode === 'otp_expired'
-        ? 'That confirmation link is expired or was already used. Resend the confirmation email and use the newest link.'
+        ? 'That confirmation link is expired or was already used. Enter your email, resend the confirmation email, and use the newest link.'
         : errorDescription.replace(/\+/g, ' ');
 
     setAuthNotice(readableMessage);
+    setCanResendConfirmation(true);
+    setMode('sign-up');
     window.history.replaceState(null, document.title, window.location.pathname);
   }, []);
 
@@ -380,11 +383,14 @@ function AuthScreen() {
       }
 
       if (mode === 'sign-up') {
+        const notice = result.data.session
+          ? 'Account created. You are signed in.'
+          : 'Account created. Check your email and confirm your address, then return here to sign in.';
+        setAuthNotice(notice);
+        setCanResendConfirmation(!result.data.session);
         Alert.alert(
           result.data.session ? 'Account created' : 'Check email',
-          result.data.session
-            ? 'You are signed in.'
-            : 'Account created. Check your email and confirm your address, then return here to sign in.',
+          notice,
         );
       }
     } catch (error) {
@@ -414,7 +420,9 @@ function AuthScreen() {
         throw error;
       }
 
-      setAuthNotice('Confirmation email sent. Use the newest email link; older links may no longer work.');
+      setAuthNotice(
+        'Confirmation email sent if that account is waiting for confirmation. Use the newest email link; older links may no longer work.',
+      );
       Alert.alert('Confirmation sent', 'Check your email for a fresh confirmation link.');
     } catch (error) {
       Alert.alert('Resend failed', error instanceof Error ? error.message : 'Try again.');
@@ -440,12 +448,14 @@ function AuthScreen() {
           onPress={() => setMode((current) => (current === 'sign-in' ? 'sign-up' : 'sign-in'))}
         >
           <Text style={styles.secondaryButtonText}>
-            {mode === 'sign-in' ? 'Create a new account' : 'Use an existing account'}
+            {mode === 'sign-in' ? 'Create a new account first' : 'Use an existing account'}
           </Text>
         </Pressable>
-        <Pressable style={styles.secondaryButton} onPress={resendConfirmation} disabled={loading}>
-          <Text style={styles.secondaryButtonText}>Resend confirmation email</Text>
-        </Pressable>
+        {mode === 'sign-up' || canResendConfirmation ? (
+          <Pressable style={styles.secondaryButton} onPress={resendConfirmation} disabled={loading}>
+            <Text style={styles.secondaryButtonText}>Resend confirmation email</Text>
+          </Pressable>
+        ) : null}
       </View>
     </SafeAreaView>
   );
