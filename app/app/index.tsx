@@ -394,7 +394,9 @@ function AuthScreen() {
         );
       }
     } catch (error) {
-      Alert.alert('Authentication failed', error instanceof Error ? error.message : 'Try again.');
+      const message = error instanceof Error ? error.message : 'Try again.';
+      setAuthNotice(message);
+      Alert.alert('Authentication failed', message);
     } finally {
       setLoading(false);
     }
@@ -425,7 +427,9 @@ function AuthScreen() {
       );
       Alert.alert('Confirmation sent', 'Check your email for a fresh confirmation link.');
     } catch (error) {
-      Alert.alert('Resend failed', error instanceof Error ? error.message : 'Try again.');
+      const message = error instanceof Error ? error.message : 'Try again.';
+      setAuthNotice(message);
+      Alert.alert('Resend failed', message);
     } finally {
       setLoading(false);
     }
