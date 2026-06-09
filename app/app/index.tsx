@@ -81,6 +81,14 @@ const supabase = hasSupabaseConfig
     })
   : null;
 
+function getEmailRedirectUrl() {
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    return window.location.origin;
+  }
+
+  return 'seadays://';
+}
+
 const initialVessels: Vessel[] = [
   {
     id: 'vessel-1',
@@ -336,14 +344,25 @@ function AuthScreen() {
       const result =
         mode === 'sign-in'
           ? await supabase.auth.signInWithPassword({ email: email.trim(), password })
-          : await supabase.auth.signUp({ email: email.trim(), password });
+          : await supabase.auth.signUp({
+              email: email.trim(),
+              password,
+              options: {
+                emailRedirectTo: getEmailRedirectUrl(),
+              },
+            });
 
       if (result.error) {
         throw result.error;
       }
 
-      if (mode === 'sign-up' && !result.data.session) {
-        Alert.alert('Check email', 'Account created. Confirm email if Supabase requires it.');
+      if (mode === 'sign-up') {
+        Alert.alert(
+          result.data.session ? 'Account created' : 'Check email',
+          result.data.session
+            ? 'You are signed in.'
+            : 'Account created. Check your email and confirm your address, then return here to sign in.',
+        );
       }
     } catch (error) {
       Alert.alert('Authentication failed', error instanceof Error ? error.message : 'Try again.');
