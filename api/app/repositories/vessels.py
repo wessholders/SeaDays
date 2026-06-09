@@ -70,7 +70,7 @@ def create_vessel_for_profile(db: Session, profile_id: UUID, payload: VesselCrea
         entity_type="vessel",
         entity_id=vessel.id,
         action="create",
-        changed_fields=payload.model_dump(),
+        changed_fields=payload.model_dump(mode="json"),
     )
     db.commit()
     db.refresh(vessel)
@@ -111,7 +111,7 @@ def update_vessel_for_profile(
         entity_type="vessel",
         entity_id=vessel.id,
         action="update",
-        changed_fields=payload.model_dump(exclude_unset=True),
+        changed_fields=payload.model_dump(exclude_unset=True, mode="json"),
     )
     db.commit()
     db.refresh(vessel)

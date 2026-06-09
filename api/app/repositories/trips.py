@@ -40,7 +40,7 @@ def create_trip_for_profile(db: Session, profile_id: UUID, payload: TripCreate) 
         entity_type="trip",
         entity_id=trip.id,
         action="create",
-        changed_fields=payload.model_dump(),
+        changed_fields=payload.model_dump(mode="json"),
     )
     db.commit()
     db.refresh(trip)
@@ -69,9 +69,8 @@ def update_trip_for_profile(
         entity_type="trip",
         entity_id=trip.id,
         action="update",
-        changed_fields=update_data,
+        changed_fields=payload.model_dump(exclude_unset=True, mode="json"),
     )
     db.commit()
     db.refresh(trip)
     return trip
-
