@@ -12,6 +12,7 @@ node_modules/
 .expo/
 dist/
 web-build/
+app/*.log
 
 # Environment
 .env
@@ -23,4 +24,3 @@ web-build/
 Thumbs.db
 .idea/
 .vscode/
-
