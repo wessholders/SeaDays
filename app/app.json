@@ -19,7 +19,9 @@
     },
     "plugins": [
       "expo-router",
-      "expo-asset"
+      "expo-asset",
+      "expo-sqlite",
+      "expo-font"
     ],
     "experiments": {
       "typedRoutes": true
