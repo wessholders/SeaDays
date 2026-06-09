@@ -1,6 +1,9 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
-import { useMemo, useState } from 'react';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { createClient, Session } from '@supabase/supabase-js';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
   Modal,
@@ -22,10 +25,6 @@ type Vessel = {
   id: string;
   name: string;
   displayName?: string;
-  make?: string;
-  model?: string;
-  lengthOverallInches?: number;
-  beamInches?: number;
   propulsionType: string;
 };
 
@@ -34,22 +33,59 @@ type Trip = {
   vesselId: string;
   tripDate: string;
   serviceRole: ServiceRole;
+  purposeType?: PurposeType;
+  waterBodyName?: string;
+  waterBodyType: WaterBodyType;
+  underwayHours?: number;
+  dayCount: number;
+};
+
+type TripDraft = {
+  vesselName: string;
+  tripDate: string;
+  serviceRole: ServiceRole;
   purposeType: PurposeType;
   waterBodyName: string;
   waterBodyType: WaterBodyType;
   underwayHours: number;
-  dayCount: number;
 };
+
+type DashboardData = {
+  vessels: Vessel[];
+  trips: Trip[];
+};
+
+type Repository = {
+  label: string;
+  loadDashboard: () => Promise<DashboardData>;
+  saveTrip: (draft: TripDraft) => Promise<void>;
+};
+
+const apiBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://127.0.0.1:8000';
+const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL ?? '';
+const supabaseAnonKey = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY ?? '';
+const hasSupabaseConfig =
+  supabaseUrl.startsWith('https://') &&
+  !supabaseUrl.includes('<') &&
+  supabaseAnonKey.length > 20 &&
+  !supabaseAnonKey.includes('<');
+
+const supabase = hasSupabaseConfig
+  ? createClient(supabaseUrl, supabaseAnonKey, {
+      auth: {
+        storage: AsyncStorage,
+        autoRefreshToken: true,
+        persistSession: true,
+        detectSessionInUrl: false,
+      },
+    })
+  : null;
 
 const initialVessels: Vessel[] = [
   {
     id: 'vessel-1',
     name: 'Sea Trial',
     displayName: 'Sea Trial',
-    make: 'Parker',
-    model: '2520',
-    lengthOverallInches: 300,
-    beamInches: 114,
     propulsionType: 'outboard',
   },
 ];
@@ -92,10 +128,276 @@ const purposeLabels: Record<PurposeType, string> = {
   other: 'Other',
 };
 
+function apiHeaders(session: Session) {
+  return {
+    Authorization: `Bearer ${session.access_token}`,
+    'Content-Type': 'application/json',
+  };
+}
+
+function mapVessel(row: Record<string, unknown>): Vessel {
+  return {
+    id: String(row.id),
+    name: String(row.name ?? 'Unnamed vessel'),
+    displayName: row.display_name ? String(row.display_name) : undefined,
+    propulsionType: String(row.propulsion_type ?? 'outboard'),
+  };
+}
+
+function mapTrip(row: Record<string, unknown>): Trip {
+  return {
+    id: String(row.id),
+    vesselId: String(row.vessel_id ?? ''),
+    tripDate: String(row.trip_date),
+    serviceRole: String(row.service_role ?? 'other') as ServiceRole,
+    purposeType: row.purpose_type ? (String(row.purpose_type) as PurposeType) : undefined,
+    waterBodyName: row.water_body_name ? String(row.water_body_name) : undefined,
+    waterBodyType: String(row.water_body_type ?? 'unknown') as WaterBodyType,
+    underwayHours: row.underway_hours == null ? undefined : Number(row.underway_hours),
+    dayCount: Number(row.day_count ?? 0),
+  };
+}
+
+class ApiRepository implements Repository {
+  label = 'Supabase API';
+
+  constructor(private readonly session: Session) {}
+
+  async loadDashboard(): Promise<DashboardData> {
+    await this.request('/v1/profile');
+    const [vessels, trips] = await Promise.all([
+      this.request('/v1/vessels'),
+      this.request('/v1/trips'),
+    ]);
+    return {
+      vessels: (vessels as Record<string, unknown>[]).map(mapVessel),
+      trips: (trips as Record<string, unknown>[]).map(mapTrip),
+    };
+  }
+
+  async saveTrip(draft: TripDraft): Promise<void> {
+    const dashboard = await this.loadDashboard();
+    let vessel = dashboard.vessels.find(
+      (item) => item.name.toLowerCase() === draft.vesselName.trim().toLowerCase(),
+    );
+
+    if (!vessel) {
+      const created = await this.request('/v1/vessels', {
+        method: 'POST',
+        body: {
+          name: draft.vesselName.trim(),
+          display_name: draft.vesselName.trim(),
+          ownership_type: 'unknown',
+          propulsion_type: 'outboard',
+          identifiers: [],
+        },
+      });
+      vessel = mapVessel(created as Record<string, unknown>);
+    }
+
+    await this.request('/v1/trips', {
+      method: 'POST',
+      body: {
+        vessel_id: vessel.id,
+        trip_date: draft.tripDate,
+        time_precision: 'date_only',
+        service_role: draft.serviceRole,
+        purpose_type: draft.purposeType,
+        water_body_name: draft.waterBodyName.trim(),
+        water_body_type: draft.waterBodyType,
+        underway_hours: draft.underwayHours,
+        day_count: draft.underwayHours >= 4 ? 1 : 0,
+        near_coastal: draft.waterBodyType === 'near_coastal',
+        inland: draft.waterBodyType === 'inland',
+        great_lakes: draft.waterBodyType === 'great_lakes',
+        ocean: draft.waterBodyType === 'offshore',
+        status: 'draft',
+      },
+    });
+  }
+
+  private async request(path: string, options: { method?: string; body?: unknown } = {}) {
+    const response = await fetch(`${apiBaseUrl}${path}`, {
+      method: options.method ?? 'GET',
+      headers: apiHeaders(this.session),
+      body: options.body ? JSON.stringify(options.body) : undefined,
+    });
+
+    if (!response.ok) {
+      const message = await response.text();
+      throw new Error(message || `Request failed: ${response.status}`);
+    }
+
+    return response.json();
+  }
+}
+
+class MockRepository implements Repository {
+  label = 'Mock workspace';
+  private vessels = initialVessels;
+  private trips = initialTrips;
+
+  async loadDashboard(): Promise<DashboardData> {
+    return { vessels: this.vessels, trips: this.trips };
+  }
+
+  async saveTrip(draft: TripDraft): Promise<void> {
+    let vessel = this.vessels.find(
+      (item) => item.name.toLowerCase() === draft.vesselName.trim().toLowerCase(),
+    );
+    if (!vessel) {
+      vessel = {
+        id: `vessel-${Date.now()}`,
+        name: draft.vesselName.trim(),
+        displayName: draft.vesselName.trim(),
+        propulsionType: 'outboard',
+      };
+      this.vessels = [...this.vessels, vessel];
+    }
+
+    this.trips = [
+      {
+        id: `trip-${Date.now()}`,
+        vesselId: vessel.id,
+        tripDate: draft.tripDate,
+        serviceRole: draft.serviceRole,
+        purposeType: draft.purposeType,
+        waterBodyName: draft.waterBodyName.trim(),
+        waterBodyType: draft.waterBodyType,
+        underwayHours: draft.underwayHours,
+        dayCount: draft.underwayHours >= 4 ? 1 : 0,
+      },
+      ...this.trips,
+    ];
+  }
+}
+
+const mockRepository = new MockRepository();
+
 export default function DashboardScreen() {
-  const [vessels, setVessels] = useState(initialVessels);
-  const [trips, setTrips] = useState(initialTrips);
+  const [session, setSession] = useState<Session | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
+
+  useEffect(() => {
+    if (!supabase) {
+      setAuthChecked(true);
+      return;
+    }
+
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      setAuthChecked(true);
+    });
+
+    const { data } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+    });
+
+    return () => data.subscription.unsubscribe();
+  }, []);
+
+  if (!hasSupabaseConfig || !supabase) {
+    return <Dashboard repository={mockRepository} />;
+  }
+
+  if (!authChecked) {
+    return <LoadingScreen />;
+  }
+
+  if (!session) {
+    return <AuthScreen />;
+  }
+
+  return <Dashboard repository={new ApiRepository(session)} onSignOut={() => supabase.auth.signOut()} />;
+}
+
+function LoadingScreen() {
+  return (
+    <SafeAreaView style={styles.centeredPage}>
+      <ActivityIndicator color="#176b75" size="large" />
+    </SafeAreaView>
+  );
+}
+
+function AuthScreen() {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [mode, setMode] = useState<'sign-in' | 'sign-up'>('sign-in');
+  const [loading, setLoading] = useState(false);
+
+  async function submit() {
+    if (!email.trim() || password.length < 6 || !supabase) {
+      Alert.alert('Check sign in', 'Enter an email and at least 6 password characters.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const result =
+        mode === 'sign-in'
+          ? await supabase.auth.signInWithPassword({ email: email.trim(), password })
+          : await supabase.auth.signUp({ email: email.trim(), password });
+
+      if (result.error) {
+        throw result.error;
+      }
+
+      if (mode === 'sign-up' && !result.data.session) {
+        Alert.alert('Check email', 'Account created. Confirm email if Supabase requires it.');
+      }
+    } catch (error) {
+      Alert.alert('Authentication failed', error instanceof Error ? error.message : 'Try again.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <SafeAreaView style={styles.safeArea}>
+      <View style={styles.authPage}>
+        <Text style={styles.title}>SeaDays</Text>
+        <Text style={styles.authSubtitle}>{mode === 'sign-in' ? 'Sign in to continue' : 'Create your account'}</Text>
+        <LabeledInput label="Email" value={email} onChangeText={setEmail} keyboardType="email-address" />
+        <LabeledInput label="Password" value={password} onChangeText={setPassword} secureTextEntry />
+        <Pressable style={styles.saveButton} onPress={submit} disabled={loading}>
+          {loading ? <ActivityIndicator color="#ffffff" /> : <MaterialCommunityIcons name="login" size={20} color="#ffffff" />}
+          <Text style={styles.saveButtonText}>{mode === 'sign-in' ? 'Sign In' : 'Create Account'}</Text>
+        </Pressable>
+        <Pressable
+          style={styles.secondaryButton}
+          onPress={() => setMode((current) => (current === 'sign-in' ? 'sign-up' : 'sign-in'))}
+        >
+          <Text style={styles.secondaryButtonText}>
+            {mode === 'sign-in' ? 'Create a new account' : 'Use an existing account'}
+          </Text>
+        </Pressable>
+      </View>
+    </SafeAreaView>
+  );
+}
+
+function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOut?: () => void }) {
+  const [vessels, setVessels] = useState<Vessel[]>([]);
+  const [trips, setTrips] = useState<Trip[]>([]);
+  const [loading, setLoading] = useState(true);
   const [showTripModal, setShowTripModal] = useState(false);
+
+  const loadDashboard = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await repository.loadDashboard();
+      setVessels(data.vessels);
+      setTrips(data.trips);
+    } catch (error) {
+      Alert.alert('Load failed', error instanceof Error ? error.message : 'Try again.');
+    } finally {
+      setLoading(false);
+    }
+  }, [repository]);
+
+  useEffect(() => {
+    loadDashboard();
+  }, [loadDashboard]);
 
   const progress = useMemo(() => {
     const totalDays = trips.reduce((sum, trip) => sum + trip.dayCount, 0);
@@ -113,37 +415,14 @@ export default function DashboardScreen() {
     };
   }, [trips]);
 
-  function saveTrip(draft: TripDraft) {
-    const vessel = vessels.find((item) => item.name.toLowerCase() === draft.vesselName.trim().toLowerCase());
-    const vesselId = vessel?.id ?? `vessel-${Date.now()}`;
-
-    if (!vessel) {
-      setVessels((current) => [
-        ...current,
-        {
-          id: vesselId,
-          name: draft.vesselName.trim(),
-          displayName: draft.vesselName.trim(),
-          propulsionType: 'outboard',
-        },
-      ]);
+  async function saveTrip(draft: TripDraft) {
+    try {
+      await repository.saveTrip(draft);
+      setShowTripModal(false);
+      await loadDashboard();
+    } catch (error) {
+      Alert.alert('Save failed', error instanceof Error ? error.message : 'Try again.');
     }
-
-    setTrips((current) => [
-      {
-        id: `trip-${Date.now()}`,
-        vesselId,
-        tripDate: draft.tripDate,
-        serviceRole: draft.serviceRole,
-        purposeType: draft.purposeType,
-        waterBodyName: draft.waterBodyName.trim(),
-        waterBodyType: draft.waterBodyType,
-        underwayHours: draft.underwayHours,
-        dayCount: draft.underwayHours >= 4 ? 1 : 0,
-      },
-      ...current,
-    ]);
-    setShowTripModal(false);
   }
 
   return (
@@ -151,12 +430,19 @@ export default function DashboardScreen() {
       <ScrollView contentContainerStyle={styles.page}>
         <View style={styles.header}>
           <View>
-            <Text style={styles.eyebrow}>Mock workspace</Text>
+            <Text style={styles.eyebrow}>{repository.label}</Text>
             <Text style={styles.title}>SeaDays</Text>
           </View>
-          <Pressable style={styles.iconButton} onPress={() => Alert.alert('Sync', 'Offline sync will connect here.')}>
-            <MaterialCommunityIcons name="cloud-sync-outline" size={24} color="#0f3f46" />
-          </Pressable>
+          <View style={styles.headerActions}>
+            <Pressable style={styles.iconButton} onPress={loadDashboard}>
+              <MaterialCommunityIcons name="refresh" size={24} color="#0f3f46" />
+            </Pressable>
+            {onSignOut ? (
+              <Pressable style={styles.iconButton} onPress={onSignOut}>
+                <MaterialCommunityIcons name="logout" size={24} color="#0f3f46" />
+              </Pressable>
+            ) : null}
+          </View>
         </View>
 
         <View style={styles.progressPanel}>
@@ -182,6 +468,9 @@ export default function DashboardScreen() {
           </Pressable>
         </View>
 
+        {loading ? <ActivityIndicator color="#176b75" /> : null}
+        {!loading && trips.length === 0 ? <Text style={styles.emptyText}>No trips yet.</Text> : null}
+
         {trips.map((trip) => {
           const vessel = vessels.find((item) => item.id === trip.vesselId);
           return (
@@ -195,7 +484,7 @@ export default function DashboardScreen() {
                   {trip.tripDate} - {roleLabels[trip.serviceRole]} - {waterTypeLabels[trip.waterBodyType]}
                 </Text>
                 <Text style={styles.tripMeta}>
-                  {trip.waterBodyName || 'No water body'} - {trip.underwayHours.toFixed(1)} hours
+                  {trip.waterBodyName || 'No water body'} - {(trip.underwayHours ?? 0).toFixed(1)} hours
                 </Text>
               </View>
               <Text style={styles.dayCount}>{trip.dayCount.toFixed(1)} d</Text>
@@ -223,16 +512,6 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
-type TripDraft = {
-  vesselName: string;
-  tripDate: string;
-  serviceRole: ServiceRole;
-  purposeType: PurposeType;
-  waterBodyName: string;
-  waterBodyType: WaterBodyType;
-  underwayHours: number;
-};
-
 function TripModal({
   visible,
   onClose,
@@ -251,6 +530,12 @@ function TripModal({
   const [serviceRole, setServiceRole] = useState<ServiceRole>('master');
   const [purposeType, setPurposeType] = useState<PurposeType>('recreational');
   const [waterBodyType, setWaterBodyType] = useState<WaterBodyType>('near_coastal');
+
+  useEffect(() => {
+    if (visible) {
+      setVesselName(defaultVesselName);
+    }
+  }, [defaultVesselName, visible]);
 
   function submit() {
     const hours = Number.parseFloat(underwayHours);
@@ -310,12 +595,14 @@ function LabeledInput({
   onChangeText,
   placeholder,
   keyboardType,
+  secureTextEntry,
 }: {
   label: string;
   value: string;
   onChangeText: (value: string) => void;
   placeholder?: string;
-  keyboardType?: 'default' | 'decimal-pad';
+  keyboardType?: 'default' | 'decimal-pad' | 'email-address';
+  secureTextEntry?: boolean;
 }) {
   return (
     <View style={styles.field}>
@@ -326,6 +613,8 @@ function LabeledInput({
         onChangeText={onChangeText}
         placeholder={placeholder}
         keyboardType={keyboardType}
+        secureTextEntry={secureTextEntry}
+        autoCapitalize={keyboardType === 'email-address' ? 'none' : 'sentences'}
       />
     </View>
   );
@@ -369,14 +658,35 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: '#f4f7f7',
   },
+  centeredPage: {
+    alignItems: 'center',
+    backgroundColor: '#f4f7f7',
+    flex: 1,
+    justifyContent: 'center',
+  },
   page: {
-    padding: 16,
     gap: 16,
+    padding: 16,
+  },
+  authPage: {
+    flex: 1,
+    justifyContent: 'center',
+    padding: 20,
+  },
+  authSubtitle: {
+    color: '#557174',
+    fontSize: 16,
+    fontWeight: '700',
+    marginBottom: 18,
   },
   header: {
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'space-between',
+  },
+  headerActions: {
+    flexDirection: 'row',
+    gap: 8,
   },
   eyebrow: {
     color: '#577174',
@@ -407,8 +717,8 @@ const styles = StyleSheet.create({
   panelHeader: {
     alignItems: 'center',
     flexDirection: 'row',
-    justifyContent: 'space-between',
     gap: 12,
+    justifyContent: 'space-between',
   },
   panelTitle: {
     color: '#103d43',
@@ -476,6 +786,15 @@ const styles = StyleSheet.create({
     color: '#ffffff',
     fontWeight: '800',
   },
+  secondaryButton: {
+    alignItems: 'center',
+    marginTop: 12,
+    padding: 10,
+  },
+  secondaryButtonText: {
+    color: '#176b75',
+    fontWeight: '800',
+  },
   tripRow: {
     alignItems: 'center',
     backgroundColor: '#ffffff',
@@ -511,6 +830,11 @@ const styles = StyleSheet.create({
     color: '#176b75',
     fontSize: 18,
     fontWeight: '900',
+  },
+  emptyText: {
+    color: '#557174',
+    fontSize: 15,
+    fontWeight: '700',
   },
   modalSafeArea: {
     backgroundColor: '#f4f7f7',

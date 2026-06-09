@@ -7,6 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     environment: str = "local"
     database_url: str
+    cors_origins: str = "http://localhost:8081,http://127.0.0.1:8081,http://localhost:19006,http://127.0.0.1:19006"
     supabase_url: AnyUrl
     supabase_jwt_audience: str = "authenticated"
     supabase_jwt_issuer: str
