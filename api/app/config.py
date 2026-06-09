@@ -1,6 +1,6 @@
 from typing import Optional
 
-from pydantic import AnyUrl
+from pydantic import AnyUrl, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,7 +17,18 @@ class Settings(BaseSettings):
     r2_bucket: Optional[str] = None
     r2_public_base_url: Optional[AnyUrl] = None
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    @field_validator("r2_public_base_url", mode="before")
+    @classmethod
+    def blank_url_to_none(cls, value: object) -> object:
+        if value == "":
+            return None
+        return value
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
 
 
 def get_settings() -> Settings:

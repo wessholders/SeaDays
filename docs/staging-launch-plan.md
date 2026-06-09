@@ -27,7 +27,9 @@ Collect these values for the Expo app environment:
 - `EXPO_PUBLIC_SUPABASE_URL`
 - `EXPO_PUBLIC_SUPABASE_ANON_KEY`
 
-Run the database migration from a trusted local machine:
+Run the database migration from a trusted local machine.
+
+If the direct database URL points at `db.<project-ref>.supabase.co` and fails locally with DNS or IPv6 connection errors, switch `DATABASE_URL` to the Supabase connection pooler URL. Keep `?sslmode=require` on the end.
 
 ```powershell
 cd api
@@ -113,4 +115,3 @@ npm run web
 ## Current Constraint
 
 This workstation does not currently have `npm` on PATH, so Expo install/typecheck/run cannot happen here until Node.js is installed or available in the shell.
-

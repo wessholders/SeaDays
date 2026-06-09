@@ -31,7 +31,7 @@ Where to find them:
 - `EXPO_PUBLIC_SUPABASE_ANON_KEY`: Supabase anon public key.
 - `SUPABASE_JWT_SECRET`: Supabase project JWT secret.
 - `SUPABASE_JWT_ISSUER`: usually `https://<project-ref>.supabase.co/auth/v1`.
-- `DATABASE_URL`: Supabase Postgres connection string.
+- `DATABASE_URL`: Supabase Postgres connection string. Prefer the pooler connection string if your local machine cannot connect to the direct database host.
 
 Important:
 
@@ -112,6 +112,16 @@ R2_BUCKET=seadays-staging
 R2_PUBLIC_BASE_URL=
 ```
 
+For Supabase, the API expects a SQLAlchemy-compatible URL:
+
+```text
+postgresql+psycopg://<user>:<password>@<host>:<port>/postgres?sslmode=require
+```
+
+If Supabase gives you a URL beginning with `postgresql://`, change only the beginning to `postgresql+psycopg://`.
+
+If the direct host looks like `db.<project-ref>.supabase.co` and migration fails with DNS/IPv6 connection errors, use the Supabase connection pooler URL instead. The pooler user often looks like `postgres.<project-ref>`. Keep `?sslmode=require` on the end.
+
 For purely local endpoint testing, the API currently allows temporary local dev auth headers when `ENVIRONMENT=local`. Staging and production should use Supabase Bearer tokens only.
 
 ## Local App `.env`
@@ -144,4 +154,3 @@ For Render, run migrations manually at first from a trusted local machine agains
 - Rotate any secret that is accidentally exposed.
 - Use separate staging and production projects/secrets.
 - Keep API/server secrets out of Expo.
-
