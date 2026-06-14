@@ -96,6 +96,7 @@ type Repository = {
   label: string;
   loadDashboard: () => Promise<DashboardData>;
   saveVessel: (draft: VesselDraft) => Promise<Vessel>;
+  updateVessel: (vesselId: string, draft: VesselDraft) => Promise<Vessel>;
   saveTrip: (draft: TripDraft) => Promise<void>;
   updateTrip: (tripId: string, draft: TripDraft) => Promise<void>;
 };
@@ -141,6 +142,17 @@ function inchesFromParts(feet: string, inches: string) {
   }
 
   return (Number.isNaN(feetValue) ? 0 : feetValue) * 12 + (Number.isNaN(inchesValue) ? 0 : inchesValue);
+}
+
+function splitInches(totalInches?: number) {
+  if (totalInches == null) {
+    return { feet: '', inches: '' };
+  }
+
+  return {
+    feet: Math.floor(totalInches / 12).toString(),
+    inches: (totalInches % 12).toString(),
+  };
 }
 
 function formatFeetAndInches(totalInches?: number) {
@@ -240,6 +252,57 @@ function makeTripPayload(draft: TripDraft) {
   };
 }
 
+function makeVesselPayload(draft: VesselDraft) {
+  const identifiers = draft.registrationNumber.trim()
+    ? [
+        {
+          identifier_type: 'state_registration',
+          identifier_value: draft.registrationNumber.trim(),
+          issuing_country: 'US',
+          is_primary: true,
+        },
+      ]
+    : [];
+
+  return {
+    name: draft.name.trim(),
+    display_name: draft.displayName.trim() || draft.name.trim(),
+    make: draft.make.trim() || null,
+    model: draft.model.trim() || null,
+    ownership_type: draft.ownershipType,
+    length_overall_inches: inchesFromParts(draft.lengthFeet, draft.lengthInches),
+    beam_inches: inchesFromParts(draft.beamFeet, draft.beamInches),
+    draft_inches: inchesFromParts(draft.draftFeet, draft.draftInches),
+    gross_tons: draft.grossTons.trim() ? Number.parseFloat(draft.grossTons) : null,
+    propulsion_type: draft.propulsionType,
+    identifiers,
+  };
+}
+
+function vesselToDraft(vessel?: Vessel | null): VesselDraft {
+  const length = splitInches(vessel?.lengthOverallInches);
+  const beam = splitInches(vessel?.beamInches);
+  const draft = splitInches(vessel?.draftInches);
+  const registration = vessel?.identifiers?.find((identifier) => identifier.identifierType === 'state_registration');
+
+  return {
+    name: vessel?.name ?? '',
+    displayName: vessel?.displayName ?? '',
+    ownershipType: vessel?.ownershipType ?? 'owned',
+    make: vessel?.make ?? '',
+    model: vessel?.model ?? '',
+    registrationNumber: registration?.identifierValue ?? '',
+    grossTons: vessel?.grossTons == null ? '' : vessel.grossTons.toString(),
+    lengthFeet: length.feet,
+    lengthInches: length.inches,
+    beamFeet: beam.feet,
+    beamInches: beam.inches,
+    draftFeet: draft.feet,
+    draftInches: draft.inches,
+    propulsionType: vessel?.propulsionType ?? 'outboard',
+  };
+}
+
 function percent(value: number, total: number) {
   if (total <= 0) {
     return 0;
@@ -269,6 +332,24 @@ function buildTrendBuckets(trips: Trip[]) {
   });
 
   return Object.entries(buckets).map(([label, hours]) => ({ label, hours }));
+}
+
+function buildDonutStyle(rows: [string, number][]): CSSProperties {
+  const total = rows.reduce((sum, [, count]) => sum + count, 0);
+  let cursor = 0;
+  const stops = rows.map(([, count], index) => {
+    const start = cursor;
+    cursor += total > 0 ? (count / total) * 100 : 0;
+    const color = chartColors[index % chartColors.length];
+    return `${color} ${start}% ${cursor}%`;
+  });
+
+  return {
+    background: `conic-gradient(${stops.join(', ')})`,
+    borderRadius: '50%',
+    height: 132,
+    width: 132,
+  };
 }
 
 const initialVessels: Vessel[] = [
@@ -307,6 +388,8 @@ const waterTypeLabels: Record<WaterBodyType, string> = {
   great_lakes: 'Great Lakes',
   unknown: 'Unknown',
 };
+
+const chartColors = ['#176b75', '#7c9a42', '#d48b36', '#8a6fb0', '#4f7fb8', '#b45562'];
 
 const roleLabels: Record<ServiceRole, string> = {
   master: 'Master',
@@ -419,35 +502,21 @@ class ApiRepository implements Repository {
   }
 
   async saveVessel(draft: VesselDraft): Promise<Vessel> {
-    const identifiers = draft.registrationNumber.trim()
-      ? [
-          {
-            identifier_type: 'state_registration',
-            identifier_value: draft.registrationNumber.trim(),
-            issuing_country: 'US',
-            is_primary: true,
-          },
-        ]
-      : [];
-
     const created = await this.request('/v1/vessels', {
       method: 'POST',
-      body: {
-        name: draft.name.trim(),
-        display_name: draft.displayName.trim() || draft.name.trim(),
-        make: draft.make.trim() || null,
-        model: draft.model.trim() || null,
-        ownership_type: draft.ownershipType,
-        length_overall_inches: inchesFromParts(draft.lengthFeet, draft.lengthInches),
-        beam_inches: inchesFromParts(draft.beamFeet, draft.beamInches),
-        draft_inches: inchesFromParts(draft.draftFeet, draft.draftInches),
-        gross_tons: draft.grossTons.trim() ? Number.parseFloat(draft.grossTons) : null,
-        propulsion_type: draft.propulsionType,
-        identifiers,
-      },
+      body: makeVesselPayload(draft),
     });
 
     return mapVessel(created as Record<string, unknown>);
+  }
+
+  async updateVessel(vesselId: string, draft: VesselDraft): Promise<Vessel> {
+    const updated = await this.request(`/v1/vessels/${vesselId}`, {
+      method: 'PATCH',
+      body: makeVesselPayload(draft),
+    });
+
+    return mapVessel(updated as Record<string, unknown>);
   }
 
   async saveTrip(draft: TripDraft): Promise<void> {
@@ -504,8 +573,20 @@ class MockRepository implements Repository {
   }
 
   async saveVessel(draft: VesselDraft): Promise<Vessel> {
-    const vessel = {
-      id: `vessel-${Date.now()}`,
+    const vessel = this.vesselFromDraft(`vessel-${Date.now()}`, draft);
+    this.vessels = [vessel, ...this.vessels];
+    return vessel;
+  }
+
+  async updateVessel(vesselId: string, draft: VesselDraft): Promise<Vessel> {
+    const updated = this.vesselFromDraft(vesselId, draft);
+    this.vessels = this.vessels.map((vessel) => (vessel.id === vesselId ? updated : vessel));
+    return updated;
+  }
+
+  private vesselFromDraft(id: string, draft: VesselDraft): Vessel {
+    return {
+      id,
       name: draft.name.trim(),
       displayName: draft.displayName.trim() || draft.name.trim(),
       make: draft.make.trim() || undefined,
@@ -526,8 +607,6 @@ class MockRepository implements Repository {
           ]
         : [],
     };
-    this.vessels = [vessel, ...this.vessels];
-    return vessel;
   }
 
   async saveTrip(draft: TripDraft): Promise<void> {
@@ -762,6 +841,7 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
   const [showTripModal, setShowTripModal] = useState(false);
   const [showVesselModal, setShowVesselModal] = useState(false);
   const [editingTrip, setEditingTrip] = useState<Trip | null>(null);
+  const [editingVessel, setEditingVessel] = useState<Vessel | null>(null);
   const [toast, setToast] = useState<{ message: string; tone: 'success' | 'error' | 'info' } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -854,10 +934,13 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
   async function saveVessel(draft: VesselDraft) {
     showToast('Saving vessel...', 'info', false);
     try {
-      const vessel = await repository.saveVessel(draft);
+      const vessel = editingVessel
+        ? await repository.updateVessel(editingVessel.id, draft)
+        : await repository.saveVessel(draft);
       setShowVesselModal(false);
+      setEditingVessel(null);
       await loadDashboard();
-      showToast(`${vessel.displayName ?? vessel.name} saved.`, 'success');
+      showToast(`${vessel.displayName ?? vessel.name} ${editingVessel ? 'updated' : 'saved'}.`, 'success');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Try again.';
       showToast(`Vessel save failed: ${message}`, 'error');
@@ -936,7 +1019,13 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Vessels</Text>
-          <Pressable style={styles.primaryButton} onPress={() => setShowVesselModal(true)}>
+          <Pressable
+            style={styles.primaryButton}
+            onPress={() => {
+              setEditingVessel(null);
+              setShowVesselModal(true);
+            }}
+          >
             <MaterialCommunityIcons name="plus" size={18} color="#ffffff" />
             <Text style={styles.primaryButtonText}>Add Vessel</Text>
           </Pressable>
@@ -944,7 +1033,14 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
 
         {vessels.length === 0 && !loading ? <Text style={styles.emptyText}>Add a frequent vessel before logging trips.</Text> : null}
         {vessels.map((vessel) => (
-          <View key={vessel.id} style={styles.vesselRow}>
+          <Pressable
+            key={vessel.id}
+            style={styles.vesselRow}
+            onPress={() => {
+              setEditingVessel(vessel);
+              setShowVesselModal(true);
+            }}
+          >
             <View style={styles.tripIcon}>
               <MaterialCommunityIcons name="ferry" size={22} color="#176b75" />
             </View>
@@ -957,7 +1053,8 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
                 {vessel.make || 'Unknown make'} {vessel.model || ''} - LOA {formatFeetAndInches(vessel.lengthOverallInches)}
               </Text>
             </View>
-          </View>
+            <MaterialCommunityIcons name="pencil" size={18} color="#176b75" />
+          </Pressable>
         ))}
 
         <View style={styles.sectionHeader}>
@@ -1015,13 +1112,18 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
         onCreateVessel={() => {
           setShowTripModal(false);
           setEditingTrip(null);
+          setEditingVessel(null);
           setShowVesselModal(true);
         }}
       />
       <VesselModal
         visible={showVesselModal}
-        onClose={() => setShowVesselModal(false)}
+        onClose={() => {
+          setShowVesselModal(false);
+          setEditingVessel(null);
+        }}
         onSave={saveVessel}
+        editingVessel={editingVessel}
       />
     </SafeAreaView>
   );
@@ -1084,21 +1186,38 @@ function BreakdownChart({ title, items }: { title: string; items: string[] }) {
     return Object.entries(counts).sort((a, b) => b[1] - a[1]);
   }, [items]);
   const total = rows.reduce((sum, [, count]) => sum + count, 0);
+  const donut = useMemo(() => buildDonutStyle(rows), [rows]);
 
   return (
     <View style={styles.chartPanel}>
       <Text style={styles.chartTitle}>{title}</Text>
       {rows.length === 0 ? <Text style={styles.emptyText}>No data yet.</Text> : null}
+      {rows.length > 0 ? (
+        <View style={styles.pieLayout}>
+          <View style={styles.pieWrap}>
+            {Platform.OS === 'web'
+              ? createElement('div', {
+                  style: donut,
+                })
+              : <View style={styles.pieFallback} />}
+            <View style={styles.pieCenter}>
+              <Text style={styles.pieCenterValue}>{total}</Text>
+              <Text style={styles.pieCenterLabel}>items</Text>
+            </View>
+          </View>
+        </View>
+      ) : null}
       {rows.map(([label, count]) => {
         const value = percent(count, total);
+        const color = chartColors[rows.findIndex(([rowLabel]) => rowLabel === label) % chartColors.length];
         return (
           <View key={label} style={styles.breakdownRow}>
             <View style={styles.breakdownLabelRow}>
-              <Text style={styles.metricLabel}>{label}</Text>
+              <View style={styles.legendLabel}>
+                <View style={[styles.legendSwatch, { backgroundColor: color }]} />
+                <Text style={styles.metricLabel}>{label}</Text>
+              </View>
               <Text style={styles.metricLabel}>{value}%</Text>
-            </View>
-            <View style={styles.breakdownTrack}>
-              <View style={[styles.breakdownFill, { width: `${value}%` }]} />
             </View>
           </View>
         );
@@ -1261,27 +1380,20 @@ function VesselModal({
   visible,
   onClose,
   onSave,
+  editingVessel,
 }: {
   visible: boolean;
   onClose: () => void;
   onSave: (draft: VesselDraft) => void;
+  editingVessel?: Vessel | null;
 }) {
-  const [draft, setDraft] = useState<VesselDraft>({
-    name: '',
-    displayName: '',
-    ownershipType: 'owned',
-    make: '',
-    model: '',
-    registrationNumber: '',
-    grossTons: '',
-    lengthFeet: '',
-    lengthInches: '',
-    beamFeet: '',
-    beamInches: '',
-    draftFeet: '',
-    draftInches: '',
-    propulsionType: 'outboard',
-  });
+  const [draft, setDraft] = useState<VesselDraft>(() => vesselToDraft(editingVessel));
+
+  useEffect(() => {
+    if (visible) {
+      setDraft(vesselToDraft(editingVessel));
+    }
+  }, [editingVessel, visible]);
 
   function setField(field: keyof VesselDraft, value: string) {
     setDraft((current) => ({ ...current, [field]: value }));
@@ -1301,7 +1413,7 @@ function VesselModal({
       <SafeAreaView style={styles.modalSafeArea}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalContainer}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Add Vessel</Text>
+            <Text style={styles.modalTitle}>{editingVessel ? 'Edit Vessel' : 'Add Vessel'}</Text>
             <Pressable style={styles.iconButton} onPress={onClose}>
               <MaterialCommunityIcons name="close" size={24} color="#0f3f46" />
             </Pressable>
@@ -1387,7 +1499,7 @@ function VesselModal({
             />
             <Pressable style={styles.saveButton} onPress={submit}>
               <MaterialCommunityIcons name="check" size={20} color="#ffffff" />
-              <Text style={styles.saveButtonText}>Save Vessel</Text>
+              <Text style={styles.saveButtonText}>{editingVessel ? 'Update Vessel' : 'Save Vessel'}</Text>
             </Pressable>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -1786,19 +1898,57 @@ const styles = StyleSheet.create({
     marginTop: 10,
   },
   breakdownLabelRow: {
+    alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'space-between',
     marginBottom: 5,
   },
-  breakdownTrack: {
-    backgroundColor: '#d8e6e7',
-    borderRadius: 999,
-    height: 10,
-    overflow: 'hidden',
+  pieLayout: {
+    alignItems: 'center',
+    marginTop: 14,
   },
-  breakdownFill: {
+  pieWrap: {
+    alignItems: 'center',
+    height: 132,
+    justifyContent: 'center',
+    position: 'relative',
+    width: 132,
+  },
+  pieFallback: {
     backgroundColor: '#176b75',
-    height: '100%',
+    borderRadius: 66,
+    height: 132,
+    width: 132,
+  },
+  pieCenter: {
+    alignItems: 'center',
+    backgroundColor: '#f7fbfb',
+    borderRadius: 42,
+    height: 84,
+    justifyContent: 'center',
+    position: 'absolute',
+    width: 84,
+  },
+  pieCenterValue: {
+    color: '#092f35',
+    fontSize: 22,
+    fontWeight: '900',
+  },
+  pieCenterLabel: {
+    color: '#557174',
+    fontSize: 11,
+    fontWeight: '800',
+    textTransform: 'uppercase',
+  },
+  legendLabel: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    gap: 8,
+  },
+  legendSwatch: {
+    borderRadius: 4,
+    height: 12,
+    width: 12,
   },
   metricRow: {
     alignItems: 'center',
