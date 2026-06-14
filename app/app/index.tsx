@@ -88,6 +88,7 @@ type VesselDraft = {
 };
 
 type ActiveTab = 'dashboard' | 'vessels';
+type InfoPageKey = 'about' | 'privacy' | 'terms' | 'accessibility' | 'contact';
 
 type DashboardData = {
   vessels: Vessel[];
@@ -448,6 +449,86 @@ const waterTypeLabels: Record<WaterBodyType, string> = {
 };
 
 const chartColors = ['#176b75', '#7c9a42', '#d48b36', '#8a6fb0', '#4f7fb8', '#b45562'];
+
+const infoPages: Record<InfoPageKey, { title: string; sections: { heading: string; body: string }[] }> = {
+  about: {
+    title: 'About SeaDays',
+    sections: [
+      {
+        heading: 'What we do',
+        body: 'SeaDays helps mariners record vessel time, organize trip history, and prepare for credential application workflows such as USCG OUPV / Six-Pack sea service documentation.',
+      },
+      {
+        heading: 'Current status',
+        body: 'This is an early testing product. Logged data should be reviewed by the user before relying on it for any official application or submission.',
+      },
+    ],
+  },
+  privacy: {
+    title: 'Privacy',
+    sections: [
+      {
+        heading: 'Data we expect to collect',
+        body: 'Account details, vessel details, trip logs, location and water body information, app usage information, and support communications may be processed to provide the service.',
+      },
+      {
+        heading: 'How we use data',
+        body: 'We use data to operate SeaDays, save logs, calculate progress, troubleshoot issues, improve the product, and prepare user-requested exports or summaries.',
+      },
+      {
+        heading: 'Production review needed',
+        body: 'This starter notice must be reviewed before public launch, especially before adding payments, analytics, exports, third-party integrations, or marketing email.',
+      },
+    ],
+  },
+  terms: {
+    title: 'Terms',
+    sections: [
+      {
+        heading: 'No government affiliation',
+        body: 'SeaDays is not affiliated with, endorsed by, or operated by the United States Coast Guard or any government agency.',
+      },
+      {
+        heading: 'User responsibility',
+        body: 'Users are responsible for the accuracy of their records and for confirming that any generated forms or summaries meet current submission requirements.',
+      },
+      {
+        heading: 'No professional advice',
+        body: 'SeaDays provides recordkeeping tools, not legal, licensing, maritime, or regulatory advice.',
+      },
+    ],
+  },
+  accessibility: {
+    title: 'Accessibility',
+    sections: [
+      {
+        heading: 'Commitment',
+        body: 'We intend SeaDays to be usable by as many people as practical, including people using keyboard navigation, screen readers, zoom, and high contrast settings.',
+      },
+      {
+        heading: 'Standard',
+        body: 'Our working target is WCAG 2.2 AA where practical for the web app, with platform accessibility checks for iOS and Android before external launch.',
+      },
+      {
+        heading: 'Feedback',
+        body: 'If something is hard to see, navigate, read, or operate, contact support so we can prioritize a fix.',
+      },
+    ],
+  },
+  contact: {
+    title: 'Contact & Support',
+    sections: [
+      {
+        heading: 'Support',
+        body: 'For testing, use the project owner support channel. Before public launch, this page should include a monitored support email and response expectations.',
+      },
+      {
+        heading: 'Compliance requests',
+        body: 'Before launch, this page should include a way to request privacy help, accessibility help, account deletion, and data export.',
+      },
+    ],
+  },
+};
 
 const roleLabels: Record<ServiceRole, string> = {
   master: 'Master',
@@ -902,6 +983,7 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
   const [editingTrip, setEditingTrip] = useState<Trip | null>(null);
   const [editingVessel, setEditingVessel] = useState<Vessel | null>(null);
   const [selectedVessel, setSelectedVessel] = useState<Vessel | null>(null);
+  const [infoPage, setInfoPage] = useState<InfoPageKey | null>(null);
   const [toast, setToast] = useState<{ message: string; tone: 'success' | 'error' | 'info' } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1173,6 +1255,7 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
             }}
           />
         )}
+        <InfoFooter onOpen={setInfoPage} />
       </ScrollView>
 
       <TripModal
@@ -1200,6 +1283,7 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
         onSave={saveVessel}
         editingVessel={editingVessel}
       />
+      <InfoModal pageKey={infoPage} onClose={() => setInfoPage(null)} />
     </SafeAreaView>
   );
 }
@@ -1398,6 +1482,55 @@ function DetailItem({ label, value }: { label: string; value: string }) {
       <Text style={styles.metricLabel}>{label}</Text>
       <Text style={styles.detailValue}>{value}</Text>
     </View>
+  );
+}
+
+function InfoFooter({ onOpen }: { onOpen: (page: InfoPageKey) => void }) {
+  const links: { key: InfoPageKey; label: string }[] = [
+    { key: 'about', label: 'About' },
+    { key: 'privacy', label: 'Privacy' },
+    { key: 'terms', label: 'Terms' },
+    { key: 'accessibility', label: 'Accessibility' },
+    { key: 'contact', label: 'Contact' },
+  ];
+
+  return (
+    <View style={styles.footer}>
+      <Text style={styles.footerBrand}>SeaDays</Text>
+      <View style={styles.footerLinks}>
+        {links.map((link) => (
+          <Pressable key={link.key} style={styles.footerLink} onPress={() => onOpen(link.key)}>
+            <Text style={styles.footerLinkText}>{link.label}</Text>
+          </Pressable>
+        ))}
+      </View>
+      <Text style={styles.footerNote}>Starter compliance pages for internal testing; review before public launch.</Text>
+    </View>
+  );
+}
+
+function InfoModal({ pageKey, onClose }: { pageKey: InfoPageKey | null; onClose: () => void }) {
+  const page = pageKey ? infoPages[pageKey] : null;
+
+  return (
+    <Modal visible={Boolean(page)} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+      <SafeAreaView style={styles.modalSafeArea}>
+        <View style={styles.modalHeader}>
+          <Text style={styles.modalTitle}>{page?.title ?? ''}</Text>
+          <Pressable style={styles.iconButton} onPress={onClose}>
+            <MaterialCommunityIcons name="close" size={24} color="#0f3f46" />
+          </Pressable>
+        </View>
+        <ScrollView contentContainerStyle={styles.modalContent}>
+          {page?.sections.map((section) => (
+            <View key={section.heading} style={styles.infoSection}>
+              <Text style={styles.infoHeading}>{section.heading}</Text>
+              <Text style={styles.infoBody}>{section.body}</Text>
+            </View>
+          ))}
+        </ScrollView>
+      </SafeAreaView>
+    </Modal>
   );
 }
 
@@ -1876,13 +2009,15 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
     borderRadius: 8,
     borderWidth: 1,
-    left: 16,
-    maxWidth: 720,
+    left: 0,
+    marginHorizontal: 'auto',
+    maxWidth: 560,
     paddingHorizontal: 14,
     paddingVertical: 12,
     position: 'absolute',
-    right: 16,
+    right: 0,
     top: 12,
+    width: '90%',
     zIndex: 20,
   },
   toastSuccess: {
@@ -2228,6 +2363,64 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '900',
     marginTop: 4,
+  },
+  footer: {
+    alignItems: 'center',
+    borderColor: '#d7e4e5',
+    borderTopWidth: 1,
+    gap: 10,
+    marginTop: 18,
+    paddingTop: 18,
+  },
+  footerBrand: {
+    color: '#092f35',
+    fontSize: 16,
+    fontWeight: '900',
+  },
+  footerLinks: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    justifyContent: 'center',
+  },
+  footerLink: {
+    backgroundColor: '#e7f1f2',
+    borderColor: '#c6dcdf',
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 8,
+  },
+  footerLinkText: {
+    color: '#176b75',
+    fontSize: 13,
+    fontWeight: '900',
+  },
+  footerNote: {
+    color: '#557174',
+    fontSize: 12,
+    fontWeight: '700',
+    textAlign: 'center',
+  },
+  infoSection: {
+    backgroundColor: '#ffffff',
+    borderColor: '#d7e4e5',
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 12,
+    padding: 14,
+  },
+  infoHeading: {
+    color: '#103d43',
+    fontSize: 16,
+    fontWeight: '900',
+    marginBottom: 6,
+  },
+  infoBody: {
+    color: '#375a5e',
+    fontSize: 15,
+    fontWeight: '600',
+    lineHeight: 22,
   },
   sectionHeader: {
     alignItems: 'center',
