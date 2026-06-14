@@ -327,11 +327,57 @@ function buildTrendBuckets(trips: Trip[]) {
     const date = new Date(`${trip.tripDate}T00:00:00`);
     const label = monthly
       ? date.toLocaleDateString(undefined, { month: 'short' })
-      : `W${Math.floor((date.getTime() - first.getTime()) / (7 * 86_400_000)) + 1}`;
+      : formatShortDate(startOfWeekMonday(date));
     buckets[label] = (buckets[label] ?? 0) + (trip.underwayHours ?? 0);
   });
 
   return Object.entries(buckets).map(([label, hours]) => ({ label, hours }));
+}
+
+function startOfWeekMonday(date: Date) {
+  const result = new Date(date);
+  const day = result.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  result.setDate(result.getDate() + diff);
+  return result;
+}
+
+function formatShortDate(date: Date) {
+  return date.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' });
+}
+
+function buildLineChartStyle(buckets: { label: string; hours: number }[]): CSSProperties {
+  const width = 560;
+  const height = 150;
+  const paddingX = 22;
+  const paddingY = 18;
+  const maxValue = Math.max(...buckets.map((bucket) => bucket.hours), 1);
+  const points = buckets.map((bucket, index) => {
+    const x = buckets.length === 1
+      ? width / 2
+      : paddingX + (index / (buckets.length - 1)) * (width - paddingX * 2);
+    const y = height - paddingY - (bucket.hours / maxValue) * (height - paddingY * 2);
+    return { x, y };
+  });
+  const polyline = points.map((point) => `${point.x},${point.y}`).join(' ');
+  const circles = points
+    .map((point) => `<circle cx="${point.x}" cy="${point.y}" r="5" fill="#176b75" stroke="#f7fbfb" stroke-width="3" />`)
+    .join('');
+
+  return {
+    backgroundImage: `url("data:image/svg+xml;utf8,${encodeURIComponent(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}">
+        <line x1="${paddingX}" y1="${height - paddingY}" x2="${width - paddingX}" y2="${height - paddingY}" stroke="#d7e4e5" stroke-width="2" />
+        <polyline fill="none" stroke="#176b75" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" points="${polyline}" />
+        ${circles}
+      </svg>`,
+    )}")`,
+    backgroundPosition: 'center',
+    backgroundRepeat: 'no-repeat',
+    backgroundSize: '100% 100%',
+    height,
+    width: '100%',
+  };
 }
 
 function buildDonutStyle(rows: [string, number][]): CSSProperties {
@@ -1154,7 +1200,7 @@ function MetricPanel({ title, rows }: { title: string; rows: [string, string][] 
 
 function TrendChart({ trips }: { trips: Trip[] }) {
   const buckets = useMemo(() => buildTrendBuckets(trips), [trips]);
-  const maxValue = Math.max(...buckets.map((bucket) => bucket.hours), 1);
+  const lineStyle = useMemo(() => buildLineChartStyle(buckets), [buckets]);
 
   return (
     <View style={styles.chartPanel}>
@@ -1162,13 +1208,16 @@ function TrendChart({ trips }: { trips: Trip[] }) {
         <Text style={styles.chartTitle}>Outing Trend</Text>
         <Text style={styles.chartMeta}>{buckets.length > 8 ? 'Monthly' : 'Weekly'}</Text>
       </View>
-      <View style={styles.trendChart}>
+      <View style={styles.lineChartShell}>
+        {Platform.OS === 'web'
+          ? createElement('div', { style: lineStyle })
+          : <View style={styles.lineFallback} />}
+      </View>
+      <View style={styles.trendLabels}>
         {buckets.map((bucket) => (
-          <View key={bucket.label} style={styles.trendColumn}>
-            <View style={styles.trendBarTrack}>
-              <View style={[styles.trendBar, { height: `${Math.max((bucket.hours / maxValue) * 100, bucket.hours > 0 ? 8 : 0)}%` }]} />
-            </View>
+          <View key={bucket.label} style={styles.trendLabelItem}>
             <Text style={styles.trendLabel}>{bucket.label}</Text>
+            <Text style={styles.trendValue}>{bucket.hours.toFixed(1)}h</Text>
           </View>
         ))}
       </View>
@@ -1863,36 +1912,43 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontWeight: '800',
   },
-  trendChart: {
-    alignItems: 'flex-end',
-    flexDirection: 'row',
-    gap: 8,
-    height: 130,
+  lineChartShell: {
+    backgroundColor: '#ffffff',
+    borderColor: '#d7e4e5',
+    borderRadius: 8,
+    borderWidth: 1,
     marginTop: 12,
-  },
-  trendColumn: {
-    alignItems: 'center',
-    flex: 1,
-    gap: 6,
-  },
-  trendBarTrack: {
-    backgroundColor: '#e0eded',
-    borderRadius: 8,
-    height: 96,
-    justifyContent: 'flex-end',
     overflow: 'hidden',
-    width: '100%',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
   },
-  trendBar: {
-    backgroundColor: '#176b75',
+  lineFallback: {
+    backgroundColor: '#d8e6e7',
     borderRadius: 8,
-    minHeight: 0,
-    width: '100%',
+    height: 150,
+  },
+  trendLabels: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 10,
+  },
+  trendLabelItem: {
+    backgroundColor: '#edf5f5',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
   },
   trendLabel: {
     color: '#557174',
     fontSize: 11,
     fontWeight: '800',
+  },
+  trendValue: {
+    color: '#092f35',
+    fontSize: 12,
+    fontWeight: '900',
+    marginTop: 2,
   },
   breakdownRow: {
     marginTop: 10,
