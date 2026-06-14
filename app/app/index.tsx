@@ -1513,22 +1513,24 @@ function InfoModal({ pageKey, onClose }: { pageKey: InfoPageKey | null; onClose:
   const page = pageKey ? infoPages[pageKey] : null;
 
   return (
-    <Modal visible={Boolean(page)} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+    <Modal visible={Boolean(page)} animationType="fade" transparent onRequestClose={onClose}>
       <SafeAreaView style={styles.modalSafeArea}>
-        <View style={styles.modalHeader}>
-          <Text style={styles.modalTitle}>{page?.title ?? ''}</Text>
-          <Pressable style={styles.iconButton} onPress={onClose}>
-            <MaterialCommunityIcons name="close" size={24} color="#0f3f46" />
-          </Pressable>
+        <View style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>{page?.title ?? ''}</Text>
+            <Pressable style={styles.iconButton} onPress={onClose}>
+              <MaterialCommunityIcons name="close" size={24} color="#0f3f46" />
+            </Pressable>
+          </View>
+          <ScrollView contentContainerStyle={styles.modalContent}>
+            {page?.sections.map((section) => (
+              <View key={section.heading} style={styles.infoSection}>
+                <Text style={styles.infoHeading}>{section.heading}</Text>
+                <Text style={styles.infoBody}>{section.body}</Text>
+              </View>
+            ))}
+          </ScrollView>
         </View>
-        <ScrollView contentContainerStyle={styles.modalContent}>
-          {page?.sections.map((section) => (
-            <View key={section.heading} style={styles.infoSection}>
-              <Text style={styles.infoHeading}>{section.heading}</Text>
-              <Text style={styles.infoBody}>{section.body}</Text>
-            </View>
-          ))}
-        </ScrollView>
       </SafeAreaView>
     </Modal>
   );
@@ -1598,7 +1600,7 @@ function TripModal({
   }
 
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+    <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
       <SafeAreaView style={styles.modalSafeArea}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalContainer}>
           <View style={styles.modalHeader}>
@@ -1717,7 +1719,7 @@ function VesselModal({
   }
 
   return (
-    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+    <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
       <SafeAreaView style={styles.modalSafeArea}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalContainer}>
           <View style={styles.modalHeader}>
@@ -2510,14 +2512,27 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   modalSafeArea: {
-    backgroundColor: '#f4f7f7',
+    alignItems: 'center',
+    backgroundColor: 'rgba(9, 47, 53, 0.42)',
     flex: 1,
+    justifyContent: 'center',
+    padding: 18,
   },
   modalContainer: {
-    flex: 1,
+    backgroundColor: '#f4f7f7',
+    borderColor: '#c6dcdf',
+    borderRadius: 8,
+    borderWidth: 1,
+    maxHeight: '92%',
+    maxWidth: 720,
+    overflow: 'hidden',
+    width: '100%',
   },
   modalHeader: {
     alignItems: 'center',
+    backgroundColor: '#f4f7f7',
+    borderBottomColor: '#d7e4e5',
+    borderBottomWidth: 1,
     flexDirection: 'row',
     justifyContent: 'space-between',
     padding: 16,
