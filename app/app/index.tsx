@@ -87,6 +87,8 @@ type VesselDraft = {
   propulsionType: string;
 };
 
+type ActiveTab = 'dashboard' | 'vessels';
+
 type DashboardData = {
   vessels: Vessel[];
   trips: Trip[];
@@ -891,6 +893,7 @@ function AuthScreen() {
 }
 
 function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOut?: () => void }) {
+  const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
   const [vessels, setVessels] = useState<Vessel[]>([]);
   const [trips, setTrips] = useState<Trip[]>([]);
   const [loading, setLoading] = useState(true);
@@ -898,6 +901,7 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
   const [showVesselModal, setShowVesselModal] = useState(false);
   const [editingTrip, setEditingTrip] = useState<Trip | null>(null);
   const [editingVessel, setEditingVessel] = useState<Vessel | null>(null);
+  const [selectedVessel, setSelectedVessel] = useState<Vessel | null>(null);
   const [toast, setToast] = useState<{ message: string; tone: 'success' | 'error' | 'info' } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -995,6 +999,8 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
         : await repository.saveVessel(draft);
       setShowVesselModal(false);
       setEditingVessel(null);
+      setSelectedVessel(vessel);
+      setActiveTab('vessels');
       await loadDashboard();
       showToast(`${vessel.displayName ?? vessel.name} ${editingVessel ? 'updated' : 'saved'}.`, 'success');
     } catch (error) {
@@ -1036,7 +1042,41 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
           </View>
         </View>
 
-        <View style={styles.progressPanel}>
+        <View style={styles.ribbon}>
+          <Pressable
+            style={[styles.ribbonButton, activeTab === 'dashboard' && styles.ribbonButtonActive]}
+            onPress={() => {
+              setActiveTab('dashboard');
+              setSelectedVessel(null);
+            }}
+          >
+            <MaterialCommunityIcons
+              name="view-dashboard-outline"
+              size={20}
+              color={activeTab === 'dashboard' ? '#ffffff' : '#176b75'}
+            />
+            <Text style={[styles.ribbonButtonText, activeTab === 'dashboard' && styles.ribbonButtonTextActive]}>
+              Dashboard
+            </Text>
+          </Pressable>
+          <Pressable
+            style={[styles.ribbonButton, activeTab === 'vessels' && styles.ribbonButtonActive]}
+            onPress={() => setActiveTab('vessels')}
+          >
+            <MaterialCommunityIcons
+              name="ferry"
+              size={20}
+              color={activeTab === 'vessels' ? '#ffffff' : '#176b75'}
+            />
+            <Text style={[styles.ribbonButtonText, activeTab === 'vessels' && styles.ribbonButtonTextActive]}>
+              Vessels
+            </Text>
+          </Pressable>
+        </View>
+
+        {activeTab === 'dashboard' ? (
+          <>
+          <View style={styles.progressPanel}>
           <View style={styles.panelHeader}>
             <Text style={styles.panelTitle}>Dashboard</Text>
             <Text style={styles.panelBadge}>{progress.totalDays.toFixed(1)} / 360 days</Text>
@@ -1072,46 +1112,6 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
             />
           </View>
         </View>
-
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Vessels</Text>
-          <Pressable
-            style={styles.primaryButton}
-            onPress={() => {
-              setEditingVessel(null);
-              setShowVesselModal(true);
-            }}
-          >
-            <MaterialCommunityIcons name="plus" size={18} color="#ffffff" />
-            <Text style={styles.primaryButtonText}>Add Vessel</Text>
-          </Pressable>
-        </View>
-
-        {vessels.length === 0 && !loading ? <Text style={styles.emptyText}>Add a frequent vessel before logging trips.</Text> : null}
-        {vessels.map((vessel) => (
-          <Pressable
-            key={vessel.id}
-            style={styles.vesselRow}
-            onPress={() => {
-              setEditingVessel(vessel);
-              setShowVesselModal(true);
-            }}
-          >
-            <View style={styles.tripIcon}>
-              <MaterialCommunityIcons name="ferry" size={22} color="#176b75" />
-            </View>
-            <View style={styles.tripBody}>
-              <Text style={styles.tripTitle}>{vessel.displayName ?? vessel.name}</Text>
-              <Text style={styles.tripMeta}>
-                {ownershipLabels[vessel.ownershipType] ?? vessel.ownershipType} - {propulsionLabels[vessel.propulsionType] ?? vessel.propulsionType}
-              </Text>
-              <Text style={styles.tripMeta}>
-                {vessel.make || 'Unknown make'} {vessel.model || ''} - LOA {formatFeetAndInches(vessel.lengthOverallInches)}
-              </Text>
-            </View>
-            <MaterialCommunityIcons name="pencil" size={18} color="#176b75" />
-          </Pressable>
-        ))}
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Trips</Text>
@@ -1154,6 +1154,25 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
             </Pressable>
           );
         })}
+          </>
+        ) : (
+          <VesselsPage
+            vessels={vessels}
+            selectedVessel={selectedVessel}
+            loading={loading}
+            onBack={() => setSelectedVessel(null)}
+            onAdd={() => {
+              setSelectedVessel(null);
+              setEditingVessel(null);
+              setShowVesselModal(true);
+            }}
+            onSelect={setSelectedVessel}
+            onEdit={(vessel) => {
+              setEditingVessel(vessel);
+              setShowVesselModal(true);
+            }}
+          />
+        )}
       </ScrollView>
 
       <TripModal
@@ -1281,6 +1300,103 @@ function BreakdownChart({ title, items }: { title: string; items: string[] }) {
           </View>
         );
       })}
+    </View>
+  );
+}
+
+function VesselsPage({
+  vessels,
+  selectedVessel,
+  loading,
+  onBack,
+  onAdd,
+  onSelect,
+  onEdit,
+}: {
+  vessels: Vessel[];
+  selectedVessel: Vessel | null;
+  loading: boolean;
+  onBack: () => void;
+  onAdd: () => void;
+  onSelect: (vessel: Vessel) => void;
+  onEdit: (vessel: Vessel) => void;
+}) {
+  if (selectedVessel) {
+    return <VesselDetail vessel={selectedVessel} onBack={onBack} onEdit={() => onEdit(selectedVessel)} />;
+  }
+
+  return (
+    <View style={styles.tabPage}>
+      <View style={styles.sectionHeader}>
+        <Text style={styles.sectionTitle}>Vessels</Text>
+        <Pressable style={styles.primaryButton} onPress={onAdd}>
+          <MaterialCommunityIcons name="plus" size={18} color="#ffffff" />
+          <Text style={styles.primaryButtonText}>Add Vessel</Text>
+        </Pressable>
+      </View>
+
+      {loading ? <ActivityIndicator color="#176b75" /> : null}
+      {vessels.length === 0 && !loading ? <Text style={styles.emptyText}>Add a frequent vessel before logging trips.</Text> : null}
+      {vessels.map((vessel) => (
+        <Pressable key={vessel.id} style={styles.vesselRow} onPress={() => onSelect(vessel)}>
+          <View style={styles.tripIcon}>
+            <MaterialCommunityIcons name="ferry" size={22} color="#176b75" />
+          </View>
+          <View style={styles.tripBody}>
+            <Text style={styles.tripTitle}>{vessel.displayName ?? vessel.name}</Text>
+            <Text style={styles.tripMeta}>
+              {ownershipLabels[vessel.ownershipType] ?? vessel.ownershipType} - {propulsionLabels[vessel.propulsionType] ?? vessel.propulsionType}
+            </Text>
+            <Text style={styles.tripMeta}>
+              {vessel.make || 'Unknown make'} {vessel.model || ''} - LOA {formatFeetAndInches(vessel.lengthOverallInches)}
+            </Text>
+          </View>
+          <Pressable style={styles.iconButtonSmall} onPress={() => onEdit(vessel)}>
+            <MaterialCommunityIcons name="pencil" size={18} color="#176b75" />
+          </Pressable>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
+function VesselDetail({ vessel, onBack, onEdit }: { vessel: Vessel; onBack: () => void; onEdit: () => void }) {
+  const primaryIdentifier = vessel.identifiers?.find((identifier) => identifier.isPrimary) ?? vessel.identifiers?.[0];
+
+  return (
+    <View style={styles.tabPage}>
+      <View style={styles.detailHeader}>
+        <Pressable style={styles.secondaryIconButton} onPress={onBack}>
+          <MaterialCommunityIcons name="arrow-left" size={22} color="#176b75" />
+        </Pressable>
+        <View style={styles.tripBody}>
+          <Text style={styles.sectionTitle}>{vessel.displayName ?? vessel.name}</Text>
+          <Text style={styles.tripMeta}>{vessel.make || 'Unknown make'} {vessel.model || ''}</Text>
+        </View>
+        <Pressable style={styles.primaryButton} onPress={onEdit}>
+          <MaterialCommunityIcons name="pencil" size={18} color="#ffffff" />
+          <Text style={styles.primaryButtonText}>Edit</Text>
+        </Pressable>
+      </View>
+
+      <View style={styles.detailGrid}>
+        <DetailItem label="Ownership" value={ownershipLabels[vessel.ownershipType] ?? vessel.ownershipType} />
+        <DetailItem label="Propulsion" value={propulsionLabels[vessel.propulsionType] ?? vessel.propulsionType} />
+        <DetailItem label="Registration" value={primaryIdentifier?.identifierValue ?? 'Not set'} />
+        <DetailItem label="Gross tons" value={vessel.grossTons == null ? 'Not set' : vessel.grossTons.toString()} />
+        <DetailItem label="Length" value={formatFeetAndInches(vessel.lengthOverallInches)} />
+        <DetailItem label="Beam" value={formatFeetAndInches(vessel.beamInches)} />
+        <DetailItem label="Draft" value={formatFeetAndInches(vessel.draftInches)} />
+      </View>
+    </View>
+  );
+}
+
+function DetailItem({ label, value }: { label: string; value: string }) {
+  return (
+    <View style={styles.detailItem}>
+      <Text style={styles.metricLabel}>{label}</Text>
+      <Text style={styles.detailValue}>{value}</Text>
     </View>
   );
 }
@@ -1819,6 +1935,33 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 8,
   },
+  ribbon: {
+    backgroundColor: '#e7f1f2',
+    borderColor: '#c6dcdf',
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 8,
+    padding: 6,
+  },
+  ribbonButton: {
+    alignItems: 'center',
+    borderRadius: 8,
+    flexDirection: 'row',
+    gap: 6,
+    minHeight: 42,
+    paddingHorizontal: 12,
+  },
+  ribbonButtonActive: {
+    backgroundColor: '#176b75',
+  },
+  ribbonButtonText: {
+    color: '#176b75',
+    fontWeight: '900',
+  },
+  ribbonButtonTextActive: {
+    color: '#ffffff',
+  },
   eyebrow: {
     color: '#577174',
     fontSize: 13,
@@ -1837,6 +1980,22 @@ const styles = StyleSheet.create({
     height: 44,
     justifyContent: 'center',
     width: 44,
+  },
+  iconButtonSmall: {
+    alignItems: 'center',
+    backgroundColor: '#e4eeee',
+    borderRadius: 8,
+    height: 38,
+    justifyContent: 'center',
+    width: 38,
+  },
+  secondaryIconButton: {
+    alignItems: 'center',
+    backgroundColor: '#e4eeee',
+    borderRadius: 8,
+    height: 42,
+    justifyContent: 'center',
+    width: 42,
   },
   progressPanel: {
     backgroundColor: '#ffffff',
@@ -2036,6 +2195,39 @@ const styles = StyleSheet.create({
     color: '#092f35',
     fontSize: 16,
     fontWeight: '900',
+  },
+  tabPage: {
+    gap: 14,
+  },
+  detailHeader: {
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderColor: '#d7e4e5',
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 12,
+    padding: 14,
+  },
+  detailGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  detailItem: {
+    backgroundColor: '#ffffff',
+    borderColor: '#d7e4e5',
+    borderRadius: 8,
+    borderWidth: 1,
+    flexBasis: 170,
+    flexGrow: 1,
+    padding: 14,
+  },
+  detailValue: {
+    color: '#092f35',
+    fontSize: 18,
+    fontWeight: '900',
+    marginTop: 4,
   },
   sectionHeader: {
     alignItems: 'center',
