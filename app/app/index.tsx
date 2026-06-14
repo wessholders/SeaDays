@@ -97,6 +97,7 @@ type Repository = {
   loadDashboard: () => Promise<DashboardData>;
   saveVessel: (draft: VesselDraft) => Promise<Vessel>;
   saveTrip: (draft: TripDraft) => Promise<void>;
+  updateTrip: (tripId: string, draft: TripDraft) => Promise<void>;
 };
 
 const apiBaseUrl = process.env.EXPO_PUBLIC_API_BASE_URL ?? 'http://127.0.0.1:8000';
@@ -203,6 +204,71 @@ function calculateUnderwayHours(dateValue: string, startTime: string, endTime: s
 
 function toIsoDateTime(dateValue: string, timeValue: string) {
   return combineDateAndTime(dateValue, timeValue).toISOString();
+}
+
+function timeFromIso(value?: string, fallback = '10:00') {
+  if (!value) {
+    return fallback;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return fallback;
+  }
+
+  return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+}
+
+function makeTripPayload(draft: TripDraft) {
+  return {
+    vessel_id: draft.vesselId,
+    trip_date: draft.tripDate,
+    started_at: toIsoDateTime(draft.tripDate, draft.startTime),
+    ended_at: toIsoDateTime(draft.tripDate, draft.endTime),
+    time_precision: 'exact',
+    service_role: draft.serviceRole,
+    purpose_type: draft.purposeType,
+    water_body_name: draft.waterBodyName.trim(),
+    water_body_type: draft.waterBodyType,
+    underway_hours: draft.underwayHours,
+    day_count: draft.underwayHours >= 4 ? 1 : 0,
+    near_coastal: draft.waterBodyType === 'near_coastal',
+    inland: draft.waterBodyType === 'inland',
+    great_lakes: draft.waterBodyType === 'great_lakes',
+    ocean: draft.waterBodyType === 'offshore',
+    status: 'draft',
+  };
+}
+
+function percent(value: number, total: number) {
+  if (total <= 0) {
+    return 0;
+  }
+
+  return Math.round((value / total) * 100);
+}
+
+function buildTrendBuckets(trips: Trip[]) {
+  if (trips.length === 0) {
+    return [{ label: 'Now', hours: 0 }];
+  }
+
+  const sortedTrips = [...trips].sort((a, b) => a.tripDate.localeCompare(b.tripDate));
+  const first = new Date(`${sortedTrips[0].tripDate}T00:00:00`);
+  const last = new Date(`${sortedTrips[sortedTrips.length - 1].tripDate}T00:00:00`);
+  const daySpan = Math.max((last.getTime() - first.getTime()) / 86_400_000, 0);
+  const monthly = daySpan > 90;
+  const buckets: Record<string, number> = {};
+
+  sortedTrips.forEach((trip) => {
+    const date = new Date(`${trip.tripDate}T00:00:00`);
+    const label = monthly
+      ? date.toLocaleDateString(undefined, { month: 'short' })
+      : `W${Math.floor((date.getTime() - first.getTime()) / (7 * 86_400_000)) + 1}`;
+    buckets[label] = (buckets[label] ?? 0) + (trip.underwayHours ?? 0);
+  });
+
+  return Object.entries(buckets).map(([label, hours]) => ({ label, hours }));
 }
 
 const initialVessels: Vessel[] = [
@@ -387,24 +453,14 @@ class ApiRepository implements Repository {
   async saveTrip(draft: TripDraft): Promise<void> {
     await this.request('/v1/trips', {
       method: 'POST',
-      body: {
-        vessel_id: draft.vesselId,
-        trip_date: draft.tripDate,
-        started_at: toIsoDateTime(draft.tripDate, draft.startTime),
-        ended_at: toIsoDateTime(draft.tripDate, draft.endTime),
-        time_precision: 'exact',
-        service_role: draft.serviceRole,
-        purpose_type: draft.purposeType,
-        water_body_name: draft.waterBodyName.trim(),
-        water_body_type: draft.waterBodyType,
-        underway_hours: draft.underwayHours,
-        day_count: draft.underwayHours >= 4 ? 1 : 0,
-        near_coastal: draft.waterBodyType === 'near_coastal',
-        inland: draft.waterBodyType === 'inland',
-        great_lakes: draft.waterBodyType === 'great_lakes',
-        ocean: draft.waterBodyType === 'offshore',
-        status: 'draft',
-      },
+      body: makeTripPayload(draft),
+    });
+  }
+
+  async updateTrip(tripId: string, draft: TripDraft): Promise<void> {
+    await this.request(`/v1/trips/${tripId}`, {
+      method: 'PATCH',
+      body: makeTripPayload(draft),
     });
   }
 
@@ -491,6 +547,26 @@ class MockRepository implements Repository {
       },
       ...this.trips,
     ];
+  }
+
+  async updateTrip(tripId: string, draft: TripDraft): Promise<void> {
+    this.trips = this.trips.map((trip) =>
+      trip.id === tripId
+        ? {
+            ...trip,
+            vesselId: draft.vesselId,
+            tripDate: draft.tripDate,
+            startedAt: toIsoDateTime(draft.tripDate, draft.startTime),
+            endedAt: toIsoDateTime(draft.tripDate, draft.endTime),
+            serviceRole: draft.serviceRole,
+            purposeType: draft.purposeType,
+            waterBodyName: draft.waterBodyName.trim(),
+            waterBodyType: draft.waterBodyType,
+            underwayHours: draft.underwayHours,
+            dayCount: draft.underwayHours >= 4 ? 1 : 0,
+          }
+        : trip,
+    );
   }
 }
 
@@ -685,6 +761,7 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
   const [loading, setLoading] = useState(true);
   const [showTripModal, setShowTripModal] = useState(false);
   const [showVesselModal, setShowVesselModal] = useState(false);
+  const [editingTrip, setEditingTrip] = useState<Trip | null>(null);
   const [toast, setToast] = useState<{ message: string; tone: 'success' | 'error' | 'info' } | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -729,27 +806,44 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
 
   const progress = useMemo(() => {
     const totalDays = trips.reduce((sum, trip) => sum + trip.dayCount, 0);
+    const totalEntries = trips.length;
+    const totalHours = trips.reduce((sum, trip) => sum + (trip.underwayHours ?? 0), 0);
+    const totalLoggedDays = trips.reduce((sum, trip) => sum + (trip.underwayHours && trip.underwayHours > 0 ? 1 : 0), 0);
     const recentDays = totalDays;
     const nearCoastalDays = trips
       .filter((trip) => trip.waterBodyType === 'near_coastal' || trip.waterBodyType === 'offshore')
       .reduce((sum, trip) => sum + trip.dayCount, 0);
+    const lastTrip = [...trips].sort((a, b) => b.tripDate.localeCompare(a.tripDate))[0];
+    const qualifyingRate = percent(totalDays, totalEntries);
 
     return {
       totalDays,
+      totalEntries,
+      totalHours,
+      totalLoggedDays,
       recentDays,
       nearCoastalDays,
+      vesselCount: vessels.length,
+      averageHours: totalEntries > 0 ? totalHours / totalEntries : 0,
+      lastTripDate: lastTrip?.tripDate ?? 'None',
+      qualifyingRate,
       totalRemaining: Math.max(360 - totalDays, 0),
       progressValue: Math.min(totalDays / 360, 1),
     };
-  }, [trips]);
+  }, [trips, vessels.length]);
 
   async function saveTrip(draft: TripDraft) {
     showToast('Saving trip...', 'info', false);
     try {
-      await repository.saveTrip(draft);
+      if (editingTrip) {
+        await repository.updateTrip(editingTrip.id, draft);
+      } else {
+        await repository.saveTrip(draft);
+      }
       setShowTripModal(false);
+      setEditingTrip(null);
       await loadDashboard();
-      showToast('Trip logged.', 'success');
+      showToast(editingTrip ? 'Trip updated.' : 'Trip logged.', 'success');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Try again.';
       showToast(`Trip save failed: ${message}`, 'error');
@@ -805,16 +899,38 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
 
         <View style={styles.progressPanel}>
           <View style={styles.panelHeader}>
-            <Text style={styles.panelTitle}>OUPV / 6-Pack Progress</Text>
+            <Text style={styles.panelTitle}>Dashboard</Text>
             <Text style={styles.panelBadge}>{progress.totalDays.toFixed(1)} / 360 days</Text>
           </View>
           <View style={styles.progressTrack}>
             <View style={[styles.progressFill, { width: `${progress.progressValue * 100}%` }]} />
           </View>
           <View style={styles.metricGrid}>
-            <Metric label="Remaining" value={progress.totalRemaining.toFixed(1)} />
-            <Metric label="Recent" value={progress.recentDays.toFixed(1)} />
-            <Metric label="Coastal+" value={progress.nearCoastalDays.toFixed(1)} />
+            <Metric label="Qualifying sea days" value={progress.totalDays.toFixed(1)} />
+            <Metric label="Total outings" value={progress.totalLoggedDays.toFixed(0)} />
+            <Metric label="Hours logged" value={progress.totalHours.toFixed(1)} />
+            <Metric label="Vessels" value={progress.vesselCount.toFixed(0)} />
+            <Metric label="Avg hours" value={progress.averageHours.toFixed(1)} />
+            <Metric label="Last outing" value={progress.lastTripDate} />
+          </View>
+          <View style={styles.dashboardGrid}>
+            <TrendChart trips={trips} />
+            <BreakdownChart
+              title="Propulsion"
+              items={vessels.map((vessel) => propulsionLabels[vessel.propulsionType] ?? vessel.propulsionType)}
+            />
+            <BreakdownChart
+              title="Water type"
+              items={trips.map((trip) => waterTypeLabels[trip.waterBodyType] ?? trip.waterBodyType)}
+            />
+            <MetricPanel
+              title="Interesting"
+              rows={[
+                ['Remaining days', progress.totalRemaining.toFixed(1)],
+                ['Coastal+ days', progress.nearCoastalDays.toFixed(1)],
+                ['Qualifying rate', `${progress.qualifyingRate}%`],
+              ]}
+            />
           </View>
         </View>
 
@@ -858,7 +974,14 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
         {trips.map((trip) => {
           const vessel = vessels.find((item) => item.id === trip.vesselId);
           return (
-            <View key={trip.id} style={styles.tripRow}>
+            <Pressable
+              key={trip.id}
+              style={styles.tripRow}
+              onPress={() => {
+                setEditingTrip(trip);
+                setShowTripModal(true);
+              }}
+            >
               <View style={styles.tripIcon}>
                 <MaterialCommunityIcons name="sail-boat" size={22} color="#176b75" />
               </View>
@@ -871,19 +994,27 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
                   {trip.waterBodyName || 'No water body'} - {(trip.underwayHours ?? 0).toFixed(1)} hours
                 </Text>
               </View>
-              <Text style={styles.dayCount}>{trip.dayCount.toFixed(1)} d</Text>
-            </View>
+              <View style={styles.tripActionColumn}>
+                <Text style={styles.dayCount}>{trip.dayCount.toFixed(1)} d</Text>
+                <MaterialCommunityIcons name="pencil" size={18} color="#176b75" />
+              </View>
+            </Pressable>
           );
         })}
       </ScrollView>
 
       <TripModal
         visible={showTripModal}
-        onClose={() => setShowTripModal(false)}
+        onClose={() => {
+          setShowTripModal(false);
+          setEditingTrip(null);
+        }}
         onSave={saveTrip}
         vessels={vessels}
+        editingTrip={editingTrip}
         onCreateVessel={() => {
           setShowTripModal(false);
+          setEditingTrip(null);
           setShowVesselModal(true);
         }}
       />
@@ -905,20 +1036,93 @@ function Metric({ label, value }: { label: string; value: string }) {
   );
 }
 
+function MetricPanel({ title, rows }: { title: string; rows: [string, string][] }) {
+  return (
+    <View style={styles.chartPanel}>
+      <Text style={styles.chartTitle}>{title}</Text>
+      {rows.map(([label, value]) => (
+        <View key={label} style={styles.metricRow}>
+          <Text style={styles.metricLabel}>{label}</Text>
+          <Text style={styles.metricRowValue}>{value}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+function TrendChart({ trips }: { trips: Trip[] }) {
+  const buckets = useMemo(() => buildTrendBuckets(trips), [trips]);
+  const maxValue = Math.max(...buckets.map((bucket) => bucket.hours), 1);
+
+  return (
+    <View style={styles.chartPanel}>
+      <View style={styles.chartHeader}>
+        <Text style={styles.chartTitle}>Outing Trend</Text>
+        <Text style={styles.chartMeta}>{buckets.length > 8 ? 'Monthly' : 'Weekly'}</Text>
+      </View>
+      <View style={styles.trendChart}>
+        {buckets.map((bucket) => (
+          <View key={bucket.label} style={styles.trendColumn}>
+            <View style={styles.trendBarTrack}>
+              <View style={[styles.trendBar, { height: `${Math.max((bucket.hours / maxValue) * 100, bucket.hours > 0 ? 8 : 0)}%` }]} />
+            </View>
+            <Text style={styles.trendLabel}>{bucket.label}</Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function BreakdownChart({ title, items }: { title: string; items: string[] }) {
+  const rows = useMemo(() => {
+    const counts = items.reduce<Record<string, number>>((result, item) => {
+      const label = item || 'Unknown';
+      result[label] = (result[label] ?? 0) + 1;
+      return result;
+    }, {});
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  }, [items]);
+  const total = rows.reduce((sum, [, count]) => sum + count, 0);
+
+  return (
+    <View style={styles.chartPanel}>
+      <Text style={styles.chartTitle}>{title}</Text>
+      {rows.length === 0 ? <Text style={styles.emptyText}>No data yet.</Text> : null}
+      {rows.map(([label, count]) => {
+        const value = percent(count, total);
+        return (
+          <View key={label} style={styles.breakdownRow}>
+            <View style={styles.breakdownLabelRow}>
+              <Text style={styles.metricLabel}>{label}</Text>
+              <Text style={styles.metricLabel}>{value}%</Text>
+            </View>
+            <View style={styles.breakdownTrack}>
+              <View style={[styles.breakdownFill, { width: `${value}%` }]} />
+            </View>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
 function TripModal({
   visible,
   onClose,
   onSave,
   vessels,
+  editingTrip,
   onCreateVessel,
 }: {
   visible: boolean;
   onClose: () => void;
   onSave: (draft: TripDraft) => void;
   vessels: Vessel[];
+  editingTrip?: Trip | null;
   onCreateVessel: () => void;
 }) {
-  const [vesselId, setVesselId] = useState(vessels[0]?.id ?? '');
+  const [vesselId, setVesselId] = useState(editingTrip?.vesselId || vessels[0]?.id || '');
   const [tripDate, setTripDate] = useState(new Date().toISOString().slice(0, 10));
   const [startTime, setStartTime] = useState('10:00');
   const [endTime, setEndTime] = useState('14:00');
@@ -933,10 +1137,19 @@ function TripModal({
   );
 
   useEffect(() => {
-    if (visible && !vesselId && vessels[0]?.id) {
-      setVesselId(vessels[0].id);
+    if (!visible) {
+      return;
     }
-  }, [vesselId, vessels, visible]);
+
+    setVesselId(editingTrip?.vesselId || vessels[0]?.id || '');
+    setTripDate(editingTrip?.tripDate || new Date().toISOString().slice(0, 10));
+    setStartTime(timeFromIso(editingTrip?.startedAt, '10:00'));
+    setEndTime(timeFromIso(editingTrip?.endedAt, '14:00'));
+    setWaterBodyName(editingTrip?.waterBodyName ?? '');
+    setServiceRole(editingTrip?.serviceRole ?? 'master');
+    setPurposeType(editingTrip?.purposeType ?? 'recreational');
+    setWaterBodyType(editingTrip?.waterBodyType ?? 'inland');
+  }, [editingTrip, vessels, visible]);
 
   function submit() {
     if (!vesselId || !tripDate.trim() || !startTime || !endTime || underwayHours <= 0 || underwayHours > 24) {
@@ -962,7 +1175,7 @@ function TripModal({
       <SafeAreaView style={styles.modalSafeArea}>
         <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalContainer}>
           <View style={styles.modalHeader}>
-            <Text style={styles.modalTitle}>Log Trip</Text>
+            <Text style={styles.modalTitle}>{editingTrip ? 'Edit Trip' : 'Log Trip'}</Text>
             <Pressable style={styles.iconButton} onPress={onClose}>
               <MaterialCommunityIcons name="close" size={24} color="#0f3f46" />
             </Pressable>
@@ -1035,7 +1248,7 @@ function TripModal({
             <SegmentedOptions label="Waters" value={waterBodyType} options={waterTypeLabels} onChange={setWaterBodyType} />
             <Pressable style={styles.saveButton} onPress={submit}>
               <MaterialCommunityIcons name="check" size={20} color="#ffffff" />
-              <Text style={styles.saveButtonText}>Save Trip</Text>
+              <Text style={styles.saveButtonText}>{editingTrip ? 'Update Trip' : 'Save Trip'}</Text>
             </Pressable>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -1493,11 +1706,13 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 10,
     marginTop: 16,
+    flexWrap: 'wrap',
   },
   metric: {
     backgroundColor: '#f1f7f7',
     borderRadius: 8,
-    flex: 1,
+    flexBasis: 150,
+    flexGrow: 1,
     padding: 12,
   },
   metricLabel: {
@@ -1509,6 +1724,94 @@ const styles = StyleSheet.create({
     color: '#092f35',
     fontSize: 24,
     fontWeight: '800',
+  },
+  dashboardGrid: {
+    gap: 12,
+    marginTop: 16,
+  },
+  chartPanel: {
+    backgroundColor: '#f7fbfb',
+    borderColor: '#d7e4e5',
+    borderRadius: 8,
+    borderWidth: 1,
+    padding: 12,
+  },
+  chartHeader: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  chartTitle: {
+    color: '#103d43',
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  chartMeta: {
+    color: '#557174',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  trendChart: {
+    alignItems: 'flex-end',
+    flexDirection: 'row',
+    gap: 8,
+    height: 130,
+    marginTop: 12,
+  },
+  trendColumn: {
+    alignItems: 'center',
+    flex: 1,
+    gap: 6,
+  },
+  trendBarTrack: {
+    backgroundColor: '#e0eded',
+    borderRadius: 8,
+    height: 96,
+    justifyContent: 'flex-end',
+    overflow: 'hidden',
+    width: '100%',
+  },
+  trendBar: {
+    backgroundColor: '#176b75',
+    borderRadius: 8,
+    minHeight: 0,
+    width: '100%',
+  },
+  trendLabel: {
+    color: '#557174',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+  breakdownRow: {
+    marginTop: 10,
+  },
+  breakdownLabelRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 5,
+  },
+  breakdownTrack: {
+    backgroundColor: '#d8e6e7',
+    borderRadius: 999,
+    height: 10,
+    overflow: 'hidden',
+  },
+  breakdownFill: {
+    backgroundColor: '#176b75',
+    height: '100%',
+  },
+  metricRow: {
+    alignItems: 'center',
+    borderBottomColor: '#d7e4e5',
+    borderBottomWidth: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingVertical: 9,
+  },
+  metricRowValue: {
+    color: '#092f35',
+    fontSize: 16,
+    fontWeight: '900',
   },
   sectionHeader: {
     alignItems: 'center',
@@ -1572,6 +1875,10 @@ const styles = StyleSheet.create({
   },
   tripBody: {
     flex: 1,
+  },
+  tripActionColumn: {
+    alignItems: 'center',
+    gap: 5,
   },
   tripTitle: {
     color: '#123d43',
@@ -1730,9 +2037,14 @@ const styles = StyleSheet.create({
     color: '#ffffff',
   },
   linkButton: {
+    alignSelf: 'flex-start',
     alignItems: 'flex-start',
+    borderColor: '#bad2d5',
+    borderRadius: 8,
+    borderWidth: 1,
     marginBottom: 14,
     marginTop: 8,
+    paddingHorizontal: 10,
     paddingVertical: 8,
   },
   linkButtonText: {
