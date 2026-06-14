@@ -920,8 +920,8 @@ function TripModal({
 }) {
   const [vesselId, setVesselId] = useState(vessels[0]?.id ?? '');
   const [tripDate, setTripDate] = useState(new Date().toISOString().slice(0, 10));
-  const [startTime, setStartTime] = useState('08:00');
-  const [endTime, setEndTime] = useState('16:00');
+  const [startTime, setStartTime] = useState('10:00');
+  const [endTime, setEndTime] = useState('14:00');
   const [waterBodyName, setWaterBodyName] = useState('');
   const [serviceRole, setServiceRole] = useState<ServiceRole>('master');
   const [purposeType, setPurposeType] = useState<PurposeType>('recreational');
@@ -997,11 +997,11 @@ function TripModal({
               <Pressable
                 style={styles.quickTimeButton}
                 onPress={() => {
-                  setStartTime('08:00');
-                  setEndTime('12:00');
+                  setStartTime('10:00');
+                  setEndTime('14:00');
                 }}
               >
-                <Text style={styles.quickTimeText}>4 hr morning</Text>
+                <Text style={styles.quickTimeText}>Default 4 hr</Text>
               </Pressable>
               <Pressable
                 style={styles.quickTimeButton}
@@ -1284,7 +1284,7 @@ function PickerInput({
           <Text style={styles.pickerHint}>{webInputType === 'date' ? 'Open calendar' : 'Choose time'}</Text>
         </View>
         <TextInput
-          style={Platform.OS === 'web' ? styles.pickerNativeInput : styles.pickerNativeInputMobile}
+          style={styles.pickerNativeInput}
           value={value}
           onChangeText={onChangeText}
           keyboardType="default"
@@ -1665,19 +1665,16 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   pickerNativeInput: {
-    bottom: 0,
-    cursor: 'pointer',
-    left: 0,
-    opacity: 0,
-    position: 'absolute',
-    right: 0,
-    top: 0,
-  },
-  pickerNativeInputMobile: {
+    backgroundColor: '#f4f8f8',
+    borderColor: '#d7e4e5',
+    borderRadius: 8,
+    borderWidth: 1,
     color: '#0f3035',
-    flex: 1,
     fontSize: 16,
-    minHeight: 48,
+    fontWeight: '800',
+    minHeight: 42,
+    minWidth: 132,
+    paddingHorizontal: 10,
   },
   segmentWrap: {
     flexDirection: 'row',
