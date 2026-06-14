@@ -1,7 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient, Session } from '@supabase/supabase-js';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -150,6 +150,31 @@ function formatFeetAndInches(totalInches?: number) {
   const feet = Math.floor(totalInches / 12);
   const inches = totalInches % 12;
   return `${feet} ft ${inches} in`;
+}
+
+function formatDateForDisplay(value: string) {
+  const [year, month, day] = value.split('-').map(Number);
+  if (!year || !month || !day) {
+    return value || 'Select date';
+  }
+
+  return new Date(year, month - 1, day).toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  });
+}
+
+function formatTimeForDisplay(value: string) {
+  const [hour, minute] = value.split(':').map(Number);
+  if (Number.isNaN(hour) || Number.isNaN(minute)) {
+    return value || 'Select time';
+  }
+
+  return new Date(2000, 0, 1, hour, minute).toLocaleTimeString(undefined, {
+    hour: 'numeric',
+    minute: '2-digit',
+  });
 }
 
 function combineDateAndTime(dateValue: string, timeValue: string) {
@@ -661,18 +686,34 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
   const [showTripModal, setShowTripModal] = useState(false);
   const [showVesselModal, setShowVesselModal] = useState(false);
   const [toast, setToast] = useState<{ message: string; tone: 'success' | 'error' | 'info' } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const showToast = useCallback((message: string, tone: 'success' | 'error' | 'info' = 'info') => {
+  const showToast = useCallback((message: string, tone: 'success' | 'error' | 'info' = 'info', autoDismiss = true) => {
+    if (toastTimer.current) {
+      globalThis.clearTimeout(toastTimer.current);
+    }
     setToast({ message, tone });
-    globalThis.setTimeout(() => setToast(null), 4500);
+    if (autoDismiss) {
+      toastTimer.current = globalThis.setTimeout(() => setToast(null), 4500);
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (toastTimer.current) {
+        globalThis.clearTimeout(toastTimer.current);
+      }
+    };
   }, []);
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
+    showToast('Loading dashboard...', 'info', false);
     try {
       const data = await repository.loadDashboard();
       setVessels(data.vessels);
       setTrips(data.trips);
+      showToast('Dashboard updated.', 'success');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Try again.';
       showToast(`Load failed: ${message}`, 'error');
@@ -703,6 +744,7 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
   }, [trips]);
 
   async function saveTrip(draft: TripDraft) {
+    showToast('Saving trip...', 'info', false);
     try {
       await repository.saveTrip(draft);
       setShowTripModal(false);
@@ -716,6 +758,7 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
   }
 
   async function saveVessel(draft: VesselDraft) {
+    showToast('Saving vessel...', 'info', false);
     try {
       const vessel = await repository.saveVessel(draft);
       setShowVesselModal(false);
@@ -950,6 +993,35 @@ function TripModal({
               <TimeInput label="Start time" value={startTime} onChangeText={setStartTime} />
               <TimeInput label="End time" value={endTime} onChangeText={setEndTime} />
             </View>
+            <View style={styles.quickTimeRow}>
+              <Pressable
+                style={styles.quickTimeButton}
+                onPress={() => {
+                  setStartTime('08:00');
+                  setEndTime('12:00');
+                }}
+              >
+                <Text style={styles.quickTimeText}>4 hr morning</Text>
+              </Pressable>
+              <Pressable
+                style={styles.quickTimeButton}
+                onPress={() => {
+                  setStartTime('08:00');
+                  setEndTime('16:00');
+                }}
+              >
+                <Text style={styles.quickTimeText}>Full day</Text>
+              </Pressable>
+              <Pressable
+                style={styles.quickTimeButton}
+                onPress={() => {
+                  setStartTime('12:00');
+                  setEndTime('18:00');
+                }}
+              >
+                <Text style={styles.quickTimeText}>Afternoon</Text>
+              </Pressable>
+            </View>
             <View style={styles.qualifyPanel}>
               <Text style={styles.metricLabel}>Calculated time at sea</Text>
               <Text style={styles.metricValue}>{underwayHours.toFixed(2)} hours</Text>
@@ -1155,11 +1227,12 @@ function DateInput({
   onChangeText: (value: string) => void;
 }) {
   return (
-    <LabeledInput
+    <PickerInput
       label={label}
       value={value}
+      displayValue={formatDateForDisplay(value)}
       onChangeText={onChangeText}
-      keyboardType="default"
+      icon="calendar-month"
       webInputType="date"
     />
   );
@@ -1175,13 +1248,50 @@ function TimeInput({
   onChangeText: (value: string) => void;
 }) {
   return (
-    <LabeledInput
+    <PickerInput
       label={label}
       value={value}
+      displayValue={formatTimeForDisplay(value)}
       onChangeText={onChangeText}
-      keyboardType="default"
+      icon="clock-outline"
       webInputType="time"
     />
+  );
+}
+
+function PickerInput({
+  label,
+  value,
+  displayValue,
+  onChangeText,
+  icon,
+  webInputType,
+}: {
+  label: string;
+  value: string;
+  displayValue: string;
+  onChangeText: (value: string) => void;
+  icon: keyof typeof MaterialCommunityIcons.glyphMap;
+  webInputType: 'date' | 'time';
+}) {
+  return (
+    <View style={styles.field}>
+      <Text style={styles.fieldLabel}>{label}</Text>
+      <View style={styles.pickerShell}>
+        <MaterialCommunityIcons name={icon} size={20} color="#176b75" />
+        <View style={styles.pickerTextBlock}>
+          <Text style={styles.pickerDisplay}>{displayValue}</Text>
+          <Text style={styles.pickerHint}>{webInputType === 'date' ? 'Open calendar' : 'Choose time'}</Text>
+        </View>
+        <TextInput
+          style={Platform.OS === 'web' ? styles.pickerNativeInput : styles.pickerNativeInputMobile}
+          value={value}
+          onChangeText={onChangeText}
+          keyboardType="default"
+          {...(Platform.OS === 'web' ? { type: webInputType } : {})}
+        />
+      </View>
+    </View>
   );
 }
 
@@ -1488,6 +1598,25 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     padding: 12,
   },
+  quickTimeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 14,
+  },
+  quickTimeButton: {
+    backgroundColor: '#e9f3f4',
+    borderColor: '#bad2d5',
+    borderRadius: 8,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
+  },
+  quickTimeText: {
+    color: '#176b75',
+    fontSize: 13,
+    fontWeight: '800',
+  },
   field: {
     flex: 1,
     marginBottom: 14,
@@ -1507,6 +1636,48 @@ const styles = StyleSheet.create({
     fontSize: 16,
     minHeight: 48,
     paddingHorizontal: 12,
+  },
+  pickerShell: {
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderColor: '#c9dada',
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 10,
+    minHeight: 58,
+    overflow: 'hidden',
+    paddingHorizontal: 12,
+    position: 'relative',
+  },
+  pickerTextBlock: {
+    flex: 1,
+  },
+  pickerDisplay: {
+    color: '#0f3035',
+    fontSize: 16,
+    fontWeight: '800',
+  },
+  pickerHint: {
+    color: '#5c7376',
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+  pickerNativeInput: {
+    bottom: 0,
+    cursor: 'pointer',
+    left: 0,
+    opacity: 0,
+    position: 'absolute',
+    right: 0,
+    top: 0,
+  },
+  pickerNativeInputMobile: {
+    color: '#0f3035',
+    flex: 1,
+    fontSize: 16,
+    minHeight: 48,
   },
   segmentWrap: {
     flexDirection: 'row',
