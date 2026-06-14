@@ -12,8 +12,11 @@ This is the practical checklist for turning SeaDays from planning docs into a wo
 
 ## 2. Accounts And Infrastructure
 
-- Create Supabase project.
-- Enable Supabase Auth email/password.
+- [x] Create Supabase project.
+- [x] Enable Supabase Auth email/password.
+- [ ] Temporarily disable email confirmation for local core-feature testing.
+- [ ] Re-enable email confirmation before external testers.
+- [ ] Configure custom SMTP for Supabase Auth before production.
 - Create Supabase database migration workflow.
 - Create Cloudflare R2 bucket for generated exports and uploads.
 - Create R2 API token with least-privilege access.
@@ -60,7 +63,7 @@ This is the practical checklist for turning SeaDays from planning docs into a wo
 
 ## 6. Mobile/Web App
 
-- Add auth screens.
+- [x] Add auth screens.
 - Add app shell navigation.
 - Add profile setup screen.
 - Add vessel list and vessel form.

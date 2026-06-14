@@ -40,6 +40,13 @@ Important:
 - The database password/connection string must only exist on the API server and local backend `.env`.
 - Do not use the Supabase service role key in the mobile app.
 
+Local testing auth decision:
+
+- During core app development, email confirmation may be temporarily disabled in Supabase to avoid rate-limit friction while testing signup, login, vessels, trips, and progress.
+- Before inviting external testers, turn email confirmation back on.
+- Before production, configure a real SMTP provider for Supabase Auth and set appropriate auth email rate limits. Supabase's built-in email provider is only suitable for light development testing.
+- Keep redirect URLs configured for local and staging app URLs so confirmation links return users to the app.
+
 ## Render Staging API
 
 Create one Render web service for the API.

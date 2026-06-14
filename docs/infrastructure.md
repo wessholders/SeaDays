@@ -25,6 +25,9 @@ Initial setup:
 
 - Create a staging Supabase project.
 - Enable email/password auth.
+- For local core-feature testing, email confirmation can be temporarily disabled.
+- Re-enable email confirmation before external testers.
+- Configure custom SMTP before production so signup, confirmation, password reset, and email-change flows are reliable and rate limits are controlled.
 - Copy the project URL into `SUPABASE_URL`.
 - Set `SUPABASE_JWT_ISSUER` to the project auth issuer.
 - Set `SUPABASE_JWT_SECRET` from the Supabase project JWT settings.
