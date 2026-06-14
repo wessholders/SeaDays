@@ -25,13 +25,31 @@ type Vessel = {
   id: string;
   name: string;
   displayName?: string;
+  make?: string;
+  model?: string;
+  ownershipType: string;
+  lengthOverallInches?: number;
+  beamInches?: number;
+  draftInches?: number;
+  grossTons?: number;
   propulsionType: string;
+  identifiers?: VesselIdentifier[];
+};
+
+type VesselIdentifier = {
+  id?: string;
+  identifierType: string;
+  identifierValue: string;
+  issuingRegion?: string;
+  isPrimary?: boolean;
 };
 
 type Trip = {
   id: string;
   vesselId: string;
   tripDate: string;
+  startedAt?: string;
+  endedAt?: string;
   serviceRole: ServiceRole;
   purposeType?: PurposeType;
   waterBodyName?: string;
@@ -41,13 +59,32 @@ type Trip = {
 };
 
 type TripDraft = {
-  vesselName: string;
+  vesselId: string;
   tripDate: string;
+  startTime: string;
+  endTime: string;
   serviceRole: ServiceRole;
   purposeType: PurposeType;
   waterBodyName: string;
   waterBodyType: WaterBodyType;
   underwayHours: number;
+};
+
+type VesselDraft = {
+  name: string;
+  displayName: string;
+  ownershipType: string;
+  make: string;
+  model: string;
+  registrationNumber: string;
+  grossTons: string;
+  lengthFeet: string;
+  lengthInches: string;
+  beamFeet: string;
+  beamInches: string;
+  draftFeet: string;
+  draftInches: string;
+  propulsionType: string;
 };
 
 type DashboardData = {
@@ -58,6 +95,7 @@ type DashboardData = {
 type Repository = {
   label: string;
   loadDashboard: () => Promise<DashboardData>;
+  saveVessel: (draft: VesselDraft) => Promise<Vessel>;
   saveTrip: (draft: TripDraft) => Promise<void>;
 };
 
@@ -81,6 +119,10 @@ const supabase = hasSupabaseConfig
     })
   : null;
 
+function isLocalApi() {
+  return apiBaseUrl.includes('127.0.0.1') || apiBaseUrl.includes('localhost');
+}
+
 function getEmailRedirectUrl() {
   if (Platform.OS === 'web' && typeof window !== 'undefined') {
     return window.location.origin;
@@ -89,12 +131,65 @@ function getEmailRedirectUrl() {
   return 'seadays://';
 }
 
+function inchesFromParts(feet: string, inches: string) {
+  const feetValue = Number.parseInt(feet || '0', 10);
+  const inchesValue = Number.parseInt(inches || '0', 10);
+
+  if (Number.isNaN(feetValue) && Number.isNaN(inchesValue)) {
+    return undefined;
+  }
+
+  return (Number.isNaN(feetValue) ? 0 : feetValue) * 12 + (Number.isNaN(inchesValue) ? 0 : inchesValue);
+}
+
+function formatFeetAndInches(totalInches?: number) {
+  if (totalInches == null) {
+    return 'Not set';
+  }
+
+  const feet = Math.floor(totalInches / 12);
+  const inches = totalInches % 12;
+  return `${feet} ft ${inches} in`;
+}
+
+function combineDateAndTime(dateValue: string, timeValue: string) {
+  return new Date(`${dateValue}T${timeValue}:00`);
+}
+
+function calculateUnderwayHours(dateValue: string, startTime: string, endTime: string) {
+  if (!dateValue || !startTime || !endTime) {
+    return 0;
+  }
+
+  const startedAt = combineDateAndTime(dateValue, startTime);
+  let endedAt = combineDateAndTime(dateValue, endTime);
+
+  if (Number.isNaN(startedAt.getTime()) || Number.isNaN(endedAt.getTime())) {
+    return 0;
+  }
+
+  if (endedAt <= startedAt) {
+    endedAt = new Date(endedAt.getTime() + 24 * 60 * 60 * 1000);
+  }
+
+  const hours = (endedAt.getTime() - startedAt.getTime()) / 3_600_000;
+  return Math.round(hours * 100) / 100;
+}
+
+function toIsoDateTime(dateValue: string, timeValue: string) {
+  return combineDateAndTime(dateValue, timeValue).toISOString();
+}
+
 const initialVessels: Vessel[] = [
   {
     id: 'vessel-1',
     name: 'Sea Trial',
     displayName: 'Sea Trial',
+    ownershipType: 'owned',
+    lengthOverallInches: 264,
+    beamInches: 96,
     propulsionType: 'outboard',
+    identifiers: [],
   },
 ];
 
@@ -103,6 +198,8 @@ const initialTrips: Trip[] = [
     id: 'trip-1',
     vesselId: 'vessel-1',
     tripDate: '2026-06-06',
+    startedAt: '2026-06-06T08:00:00.000Z',
+    endedAt: '2026-06-06T16:00:00.000Z',
     serviceRole: 'master',
     purposeType: 'recreational',
     waterBodyName: 'Galveston Bay',
@@ -136,11 +233,35 @@ const purposeLabels: Record<PurposeType, string> = {
   other: 'Other',
 };
 
-function apiHeaders(session: Session) {
-  return {
+const ownershipLabels: Record<string, string> = {
+  owned: 'Owned',
+  borrowed: 'Not owned',
+  employer: 'Employer',
+  chartered: 'Chartered',
+  unknown: 'Unknown',
+};
+
+const propulsionLabels: Record<string, string> = {
+  outboard: 'Outboard',
+  inboard: 'Inboard',
+  sail: 'Sail',
+  sterndrive: 'Sterndrive',
+  jet: 'Jet',
+  other: 'Other',
+};
+
+function apiHeaders(session: Session): Record<string, string> {
+  const headers: Record<string, string> = {
     Authorization: `Bearer ${session.access_token}`,
     'Content-Type': 'application/json',
   };
+
+  if (isLocalApi() && session.user.id && session.user.email) {
+    headers['X-Profile-Id'] = session.user.id;
+    headers['X-User-Email'] = session.user.email;
+  }
+
+  return headers;
 }
 
 function mapVessel(row: Record<string, unknown>): Vessel {
@@ -148,7 +269,26 @@ function mapVessel(row: Record<string, unknown>): Vessel {
     id: String(row.id),
     name: String(row.name ?? 'Unnamed vessel'),
     displayName: row.display_name ? String(row.display_name) : undefined,
+    make: row.make ? String(row.make) : undefined,
+    model: row.model ? String(row.model) : undefined,
+    ownershipType: String(row.ownership_type ?? 'unknown'),
+    lengthOverallInches: row.length_overall_inches == null ? undefined : Number(row.length_overall_inches),
+    beamInches: row.beam_inches == null ? undefined : Number(row.beam_inches),
+    draftInches: row.draft_inches == null ? undefined : Number(row.draft_inches),
+    grossTons: row.gross_tons == null ? undefined : Number(row.gross_tons),
     propulsionType: String(row.propulsion_type ?? 'outboard'),
+    identifiers: Array.isArray(row.identifiers)
+      ? row.identifiers.map((identifier) => {
+          const item = identifier as Record<string, unknown>;
+          return {
+            id: item.id ? String(item.id) : undefined,
+            identifierType: String(item.identifier_type ?? 'registration_number'),
+            identifierValue: String(item.identifier_value ?? ''),
+            issuingRegion: item.issuing_region ? String(item.issuing_region) : undefined,
+            isPrimary: Boolean(item.is_primary),
+          };
+        })
+      : [],
   };
 }
 
@@ -157,6 +297,8 @@ function mapTrip(row: Record<string, unknown>): Trip {
     id: String(row.id),
     vesselId: String(row.vessel_id ?? ''),
     tripDate: String(row.trip_date),
+    startedAt: row.started_at ? String(row.started_at) : undefined,
+    endedAt: row.ended_at ? String(row.ended_at) : undefined,
     serviceRole: String(row.service_role ?? 'other') as ServiceRole,
     purposeType: row.purpose_type ? (String(row.purpose_type) as PurposeType) : undefined,
     waterBodyName: row.water_body_name ? String(row.water_body_name) : undefined,
@@ -183,32 +325,47 @@ class ApiRepository implements Repository {
     };
   }
 
+  async saveVessel(draft: VesselDraft): Promise<Vessel> {
+    const identifiers = draft.registrationNumber.trim()
+      ? [
+          {
+            identifier_type: 'registration_number',
+            identifier_value: draft.registrationNumber.trim(),
+            issuing_country: 'US',
+            is_primary: true,
+          },
+        ]
+      : [];
+
+    const created = await this.request('/v1/vessels', {
+      method: 'POST',
+      body: {
+        name: draft.name.trim(),
+        display_name: draft.displayName.trim() || draft.name.trim(),
+        make: draft.make.trim() || null,
+        model: draft.model.trim() || null,
+        ownership_type: draft.ownershipType,
+        length_overall_inches: inchesFromParts(draft.lengthFeet, draft.lengthInches),
+        beam_inches: inchesFromParts(draft.beamFeet, draft.beamInches),
+        draft_inches: inchesFromParts(draft.draftFeet, draft.draftInches),
+        gross_tons: draft.grossTons.trim() ? Number.parseFloat(draft.grossTons) : null,
+        propulsion_type: draft.propulsionType,
+        identifiers,
+      },
+    });
+
+    return mapVessel(created as Record<string, unknown>);
+  }
+
   async saveTrip(draft: TripDraft): Promise<void> {
-    const dashboard = await this.loadDashboard();
-    let vessel = dashboard.vessels.find(
-      (item) => item.name.toLowerCase() === draft.vesselName.trim().toLowerCase(),
-    );
-
-    if (!vessel) {
-      const created = await this.request('/v1/vessels', {
-        method: 'POST',
-        body: {
-          name: draft.vesselName.trim(),
-          display_name: draft.vesselName.trim(),
-          ownership_type: 'unknown',
-          propulsion_type: 'outboard',
-          identifiers: [],
-        },
-      });
-      vessel = mapVessel(created as Record<string, unknown>);
-    }
-
     await this.request('/v1/trips', {
       method: 'POST',
       body: {
-        vessel_id: vessel.id,
+        vessel_id: draft.vesselId,
         trip_date: draft.tripDate,
-        time_precision: 'date_only',
+        started_at: toIsoDateTime(draft.tripDate, draft.startTime),
+        ended_at: toIsoDateTime(draft.tripDate, draft.endTime),
+        time_precision: 'exact',
         service_role: draft.serviceRole,
         purpose_type: draft.purposeType,
         water_body_name: draft.waterBodyName.trim(),
@@ -233,7 +390,15 @@ class ApiRepository implements Repository {
 
     if (!response.ok) {
       const message = await response.text();
-      throw new Error(message || `Request failed: ${response.status}`);
+      let detail = message;
+      try {
+        const parsed = JSON.parse(message) as { detail?: string };
+        detail = parsed.detail ?? message;
+      } catch {
+        detail = message;
+      }
+
+      throw new Error(detail || `Request failed: ${response.status}`);
     }
 
     return response.json();
@@ -249,25 +414,41 @@ class MockRepository implements Repository {
     return { vessels: this.vessels, trips: this.trips };
   }
 
-  async saveTrip(draft: TripDraft): Promise<void> {
-    let vessel = this.vessels.find(
-      (item) => item.name.toLowerCase() === draft.vesselName.trim().toLowerCase(),
-    );
-    if (!vessel) {
-      vessel = {
-        id: `vessel-${Date.now()}`,
-        name: draft.vesselName.trim(),
-        displayName: draft.vesselName.trim(),
-        propulsionType: 'outboard',
-      };
-      this.vessels = [...this.vessels, vessel];
-    }
+  async saveVessel(draft: VesselDraft): Promise<Vessel> {
+    const vessel = {
+      id: `vessel-${Date.now()}`,
+      name: draft.name.trim(),
+      displayName: draft.displayName.trim() || draft.name.trim(),
+      make: draft.make.trim() || undefined,
+      model: draft.model.trim() || undefined,
+      ownershipType: draft.ownershipType,
+      lengthOverallInches: inchesFromParts(draft.lengthFeet, draft.lengthInches),
+      beamInches: inchesFromParts(draft.beamFeet, draft.beamInches),
+      draftInches: inchesFromParts(draft.draftFeet, draft.draftInches),
+      grossTons: draft.grossTons.trim() ? Number.parseFloat(draft.grossTons) : undefined,
+      propulsionType: draft.propulsionType,
+      identifiers: draft.registrationNumber.trim()
+        ? [
+            {
+              identifierType: 'registration_number',
+              identifierValue: draft.registrationNumber.trim(),
+              isPrimary: true,
+            },
+          ]
+        : [],
+    };
+    this.vessels = [vessel, ...this.vessels];
+    return vessel;
+  }
 
+  async saveTrip(draft: TripDraft): Promise<void> {
     this.trips = [
       {
         id: `trip-${Date.now()}`,
-        vesselId: vessel.id,
+        vesselId: draft.vesselId,
         tripDate: draft.tripDate,
+        startedAt: toIsoDateTime(draft.tripDate, draft.startTime),
+        endedAt: toIsoDateTime(draft.tripDate, draft.endTime),
         serviceRole: draft.serviceRole,
         purposeType: draft.purposeType,
         waterBodyName: draft.waterBodyName.trim(),
@@ -470,6 +651,13 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
   const [trips, setTrips] = useState<Trip[]>([]);
   const [loading, setLoading] = useState(true);
   const [showTripModal, setShowTripModal] = useState(false);
+  const [showVesselModal, setShowVesselModal] = useState(false);
+  const [toast, setToast] = useState<{ message: string; tone: 'success' | 'error' | 'info' } | null>(null);
+
+  const showToast = useCallback((message: string, tone: 'success' | 'error' | 'info' = 'info') => {
+    setToast({ message, tone });
+    globalThis.setTimeout(() => setToast(null), 4500);
+  }, []);
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
@@ -478,11 +666,13 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
       setVessels(data.vessels);
       setTrips(data.trips);
     } catch (error) {
-      Alert.alert('Load failed', error instanceof Error ? error.message : 'Try again.');
+      const message = error instanceof Error ? error.message : 'Try again.';
+      showToast(`Load failed: ${message}`, 'error');
+      Alert.alert('Load failed', message);
     } finally {
       setLoading(false);
     }
-  }, [repository]);
+  }, [repository, showToast]);
 
   useEffect(() => {
     loadDashboard();
@@ -509,13 +699,41 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
       await repository.saveTrip(draft);
       setShowTripModal(false);
       await loadDashboard();
+      showToast('Trip logged.', 'success');
     } catch (error) {
-      Alert.alert('Save failed', error instanceof Error ? error.message : 'Try again.');
+      const message = error instanceof Error ? error.message : 'Try again.';
+      showToast(`Trip save failed: ${message}`, 'error');
+      Alert.alert('Save failed', message);
+    }
+  }
+
+  async function saveVessel(draft: VesselDraft) {
+    try {
+      const vessel = await repository.saveVessel(draft);
+      setShowVesselModal(false);
+      await loadDashboard();
+      showToast(`${vessel.displayName ?? vessel.name} saved.`, 'success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Try again.';
+      showToast(`Vessel save failed: ${message}`, 'error');
+      Alert.alert('Vessel save failed', message);
     }
   }
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      {toast ? (
+        <View
+          style={[
+            styles.toast,
+            toast.tone === 'success' && styles.toastSuccess,
+            toast.tone === 'error' && styles.toastError,
+            toast.tone === 'info' && styles.toastInfo,
+          ]}
+        >
+          <Text style={styles.toastText}>{toast.message}</Text>
+        </View>
+      ) : null}
       <ScrollView contentContainerStyle={styles.page}>
         <View style={styles.header}>
           <View>
@@ -548,6 +766,32 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
             <Metric label="Coastal+" value={progress.nearCoastalDays.toFixed(1)} />
           </View>
         </View>
+
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>Vessels</Text>
+          <Pressable style={styles.primaryButton} onPress={() => setShowVesselModal(true)}>
+            <MaterialCommunityIcons name="plus" size={18} color="#ffffff" />
+            <Text style={styles.primaryButtonText}>Add Vessel</Text>
+          </Pressable>
+        </View>
+
+        {vessels.length === 0 && !loading ? <Text style={styles.emptyText}>Add a frequent vessel before logging trips.</Text> : null}
+        {vessels.map((vessel) => (
+          <View key={vessel.id} style={styles.vesselRow}>
+            <View style={styles.tripIcon}>
+              <MaterialCommunityIcons name="ferry" size={22} color="#176b75" />
+            </View>
+            <View style={styles.tripBody}>
+              <Text style={styles.tripTitle}>{vessel.displayName ?? vessel.name}</Text>
+              <Text style={styles.tripMeta}>
+                {ownershipLabels[vessel.ownershipType] ?? vessel.ownershipType} - {propulsionLabels[vessel.propulsionType] ?? vessel.propulsionType}
+              </Text>
+              <Text style={styles.tripMeta}>
+                {vessel.make || 'Unknown make'} {vessel.model || ''} - LOA {formatFeetAndInches(vessel.lengthOverallInches)}
+              </Text>
+            </View>
+          </View>
+        ))}
 
         <View style={styles.sectionHeader}>
           <Text style={styles.sectionTitle}>Trips</Text>
@@ -586,7 +830,16 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
         visible={showTripModal}
         onClose={() => setShowTripModal(false)}
         onSave={saveTrip}
-        defaultVesselName={vessels[0]?.name ?? ''}
+        vessels={vessels}
+        onCreateVessel={() => {
+          setShowTripModal(false);
+          setShowVesselModal(true);
+        }}
+      />
+      <VesselModal
+        visible={showVesselModal}
+        onClose={() => setShowVesselModal(false)}
+        onSave={saveVessel}
       />
     </SafeAreaView>
   );
@@ -605,42 +858,51 @@ function TripModal({
   visible,
   onClose,
   onSave,
-  defaultVesselName,
+  vessels,
+  onCreateVessel,
 }: {
   visible: boolean;
   onClose: () => void;
   onSave: (draft: TripDraft) => void;
-  defaultVesselName: string;
+  vessels: Vessel[];
+  onCreateVessel: () => void;
 }) {
-  const [vesselName, setVesselName] = useState(defaultVesselName);
-  const [tripDate, setTripDate] = useState('2026-06-08');
+  const [vesselId, setVesselId] = useState(vessels[0]?.id ?? '');
+  const [tripDate, setTripDate] = useState(new Date().toISOString().slice(0, 10));
+  const [startTime, setStartTime] = useState('08:00');
+  const [endTime, setEndTime] = useState('16:00');
   const [waterBodyName, setWaterBodyName] = useState('');
-  const [underwayHours, setUnderwayHours] = useState('8');
   const [serviceRole, setServiceRole] = useState<ServiceRole>('master');
   const [purposeType, setPurposeType] = useState<PurposeType>('recreational');
   const [waterBodyType, setWaterBodyType] = useState<WaterBodyType>('near_coastal');
 
+  const underwayHours = useMemo(
+    () => calculateUnderwayHours(tripDate, startTime, endTime),
+    [endTime, startTime, tripDate],
+  );
+
   useEffect(() => {
-    if (visible) {
-      setVesselName(defaultVesselName);
+    if (visible && !vesselId && vessels[0]?.id) {
+      setVesselId(vessels[0].id);
     }
-  }, [defaultVesselName, visible]);
+  }, [vesselId, vessels, visible]);
 
   function submit() {
-    const hours = Number.parseFloat(underwayHours);
-    if (!vesselName.trim() || !tripDate.trim() || Number.isNaN(hours) || hours < 0 || hours > 24) {
-      Alert.alert('Check trip', 'Enter a vessel, date, and 0-24 underway hours.');
+    if (!vesselId || !tripDate.trim() || !startTime || !endTime || underwayHours <= 0 || underwayHours > 24) {
+      Alert.alert('Check trip', 'Select a vessel, date, start time, and end time.');
       return;
     }
 
     onSave({
-      vesselName,
+      vesselId,
       tripDate,
+      startTime,
+      endTime,
       serviceRole,
       purposeType,
       waterBodyName,
       waterBodyType,
-      underwayHours: hours,
+      underwayHours,
     });
   }
 
@@ -655,21 +917,184 @@ function TripModal({
             </Pressable>
           </View>
           <ScrollView contentContainerStyle={styles.modalContent}>
-            <LabeledInput label="Vessel" value={vesselName} onChangeText={setVesselName} />
-            <LabeledInput label="Trip date" value={tripDate} onChangeText={setTripDate} />
+            <Text style={styles.fieldLabel}>Vessel</Text>
+            <View style={styles.segmentWrap}>
+              {vessels.map((vessel) => {
+                const selected = vessel.id === vesselId;
+                return (
+                  <Pressable
+                    key={vessel.id}
+                    style={[styles.segment, selected && styles.segmentSelected]}
+                    onPress={() => setVesselId(vessel.id)}
+                  >
+                    <Text style={[styles.segmentText, selected && styles.segmentTextSelected]}>
+                      {vessel.displayName ?? vessel.name}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            <Pressable style={styles.linkButton} onPress={onCreateVessel}>
+              <Text style={styles.linkButtonText}>or create a new vessel</Text>
+            </Pressable>
+            <DateInput label="Trip date" value={tripDate} onChangeText={setTripDate} />
+            <View style={styles.twoColumn}>
+              <TimeInput label="Start time" value={startTime} onChangeText={setStartTime} />
+              <TimeInput label="End time" value={endTime} onChangeText={setEndTime} />
+            </View>
+            <View style={styles.qualifyPanel}>
+              <Text style={styles.metricLabel}>Calculated time at sea</Text>
+              <Text style={styles.metricValue}>{underwayHours.toFixed(2)} hours</Text>
+              <Text style={styles.tripMeta}>
+                {underwayHours >= 4 ? 'Qualifies as 1 sea day.' : 'Needs at least 4 hours to count as a sea day.'}
+              </Text>
+            </View>
             <LabeledInput label="Water body" value={waterBodyName} onChangeText={setWaterBodyName} placeholder="Galveston Bay" />
-            <LabeledInput
-              label="Hours underway"
-              value={underwayHours}
-              onChangeText={setUnderwayHours}
-              keyboardType="decimal-pad"
-            />
             <SegmentedOptions label="Role" value={serviceRole} options={roleLabels} onChange={setServiceRole} />
             <SegmentedOptions label="Purpose" value={purposeType} options={purposeLabels} onChange={setPurposeType} />
             <SegmentedOptions label="Waters" value={waterBodyType} options={waterTypeLabels} onChange={setWaterBodyType} />
             <Pressable style={styles.saveButton} onPress={submit}>
               <MaterialCommunityIcons name="check" size={20} color="#ffffff" />
               <Text style={styles.saveButtonText}>Save Trip</Text>
+            </Pressable>
+          </ScrollView>
+        </KeyboardAvoidingView>
+      </SafeAreaView>
+    </Modal>
+  );
+}
+
+function VesselModal({
+  visible,
+  onClose,
+  onSave,
+}: {
+  visible: boolean;
+  onClose: () => void;
+  onSave: (draft: VesselDraft) => void;
+}) {
+  const [draft, setDraft] = useState<VesselDraft>({
+    name: '',
+    displayName: '',
+    ownershipType: 'owned',
+    make: '',
+    model: '',
+    registrationNumber: '',
+    grossTons: '',
+    lengthFeet: '',
+    lengthInches: '',
+    beamFeet: '',
+    beamInches: '',
+    draftFeet: '',
+    draftInches: '',
+    propulsionType: 'outboard',
+  });
+
+  function setField(field: keyof VesselDraft, value: string) {
+    setDraft((current) => ({ ...current, [field]: value }));
+  }
+
+  function submit() {
+    if (!draft.name.trim()) {
+      Alert.alert('Check vessel', 'Enter a vessel name.');
+      return;
+    }
+
+    onSave(draft);
+  }
+
+  return (
+    <Modal visible={visible} animationType="slide" presentationStyle="pageSheet" onRequestClose={onClose}>
+      <SafeAreaView style={styles.modalSafeArea}>
+        <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Add Vessel</Text>
+            <Pressable style={styles.iconButton} onPress={onClose}>
+              <MaterialCommunityIcons name="close" size={24} color="#0f3f46" />
+            </Pressable>
+          </View>
+          <ScrollView contentContainerStyle={styles.modalContent}>
+            <LabeledInput label="Vessel name" value={draft.name} onChangeText={(value) => setField('name', value)} />
+            <LabeledInput
+              label="Display name"
+              value={draft.displayName}
+              onChangeText={(value) => setField('displayName', value)}
+              placeholder="Optional"
+            />
+            <View style={styles.twoColumn}>
+              <LabeledInput label="Make" value={draft.make} onChangeText={(value) => setField('make', value)} />
+              <LabeledInput label="Model" value={draft.model} onChangeText={(value) => setField('model', value)} />
+            </View>
+            <LabeledInput
+              label="Registration number"
+              value={draft.registrationNumber}
+              onChangeText={(value) => setField('registrationNumber', value)}
+              placeholder="Optional"
+            />
+            <SegmentedOptions
+              label="Ownership"
+              value={draft.ownershipType}
+              options={ownershipLabels}
+              onChange={(value) => setField('ownershipType', value)}
+            />
+            <SegmentedOptions
+              label="Propulsion"
+              value={draft.propulsionType}
+              options={propulsionLabels}
+              onChange={(value) => setField('propulsionType', value)}
+            />
+            <View style={styles.twoColumn}>
+              <LabeledInput
+                label="Length ft"
+                value={draft.lengthFeet}
+                onChangeText={(value) => setField('lengthFeet', value)}
+                keyboardType="decimal-pad"
+              />
+              <LabeledInput
+                label="Length in"
+                value={draft.lengthInches}
+                onChangeText={(value) => setField('lengthInches', value)}
+                keyboardType="decimal-pad"
+              />
+            </View>
+            <View style={styles.twoColumn}>
+              <LabeledInput
+                label="Beam ft"
+                value={draft.beamFeet}
+                onChangeText={(value) => setField('beamFeet', value)}
+                keyboardType="decimal-pad"
+              />
+              <LabeledInput
+                label="Beam in"
+                value={draft.beamInches}
+                onChangeText={(value) => setField('beamInches', value)}
+                keyboardType="decimal-pad"
+              />
+            </View>
+            <View style={styles.twoColumn}>
+              <LabeledInput
+                label="Draft ft"
+                value={draft.draftFeet}
+                onChangeText={(value) => setField('draftFeet', value)}
+                keyboardType="decimal-pad"
+              />
+              <LabeledInput
+                label="Draft in"
+                value={draft.draftInches}
+                onChangeText={(value) => setField('draftInches', value)}
+                keyboardType="decimal-pad"
+              />
+            </View>
+            <LabeledInput
+              label="Gross tons"
+              value={draft.grossTons}
+              onChangeText={(value) => setField('grossTons', value)}
+              keyboardType="decimal-pad"
+              placeholder="Optional"
+            />
+            <Pressable style={styles.saveButton} onPress={submit}>
+              <MaterialCommunityIcons name="check" size={20} color="#ffffff" />
+              <Text style={styles.saveButtonText}>Save Vessel</Text>
             </Pressable>
           </ScrollView>
         </KeyboardAvoidingView>
@@ -685,6 +1110,7 @@ function LabeledInput({
   placeholder,
   keyboardType,
   secureTextEntry,
+  webInputType,
 }: {
   label: string;
   value: string;
@@ -692,6 +1118,7 @@ function LabeledInput({
   placeholder?: string;
   keyboardType?: 'default' | 'decimal-pad' | 'email-address';
   secureTextEntry?: boolean;
+  webInputType?: 'date' | 'time';
 }) {
   return (
     <View style={styles.field}>
@@ -704,8 +1131,49 @@ function LabeledInput({
         keyboardType={keyboardType}
         secureTextEntry={secureTextEntry}
         autoCapitalize={keyboardType === 'email-address' ? 'none' : 'sentences'}
+        {...(Platform.OS === 'web' && webInputType ? { type: webInputType } : {})}
       />
     </View>
+  );
+}
+
+function DateInput({
+  label,
+  value,
+  onChangeText,
+}: {
+  label: string;
+  value: string;
+  onChangeText: (value: string) => void;
+}) {
+  return (
+    <LabeledInput
+      label={label}
+      value={value}
+      onChangeText={onChangeText}
+      keyboardType="default"
+      webInputType="date"
+    />
+  );
+}
+
+function TimeInput({
+  label,
+  value,
+  onChangeText,
+}: {
+  label: string;
+  value: string;
+  onChangeText: (value: string) => void;
+}) {
+  return (
+    <LabeledInput
+      label={label}
+      value={value}
+      onChangeText={onChangeText}
+      keyboardType="default"
+      webInputType="time"
+    />
   );
 }
 
@@ -756,6 +1224,37 @@ const styles = StyleSheet.create({
   page: {
     gap: 16,
     padding: 16,
+  },
+  toast: {
+    alignSelf: 'center',
+    borderRadius: 8,
+    borderWidth: 1,
+    left: 16,
+    maxWidth: 720,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    position: 'absolute',
+    right: 16,
+    top: 12,
+    zIndex: 20,
+  },
+  toastSuccess: {
+    backgroundColor: '#e7f6ed',
+    borderColor: '#70b987',
+  },
+  toastError: {
+    backgroundColor: '#fff0f0',
+    borderColor: '#d98282',
+  },
+  toastInfo: {
+    backgroundColor: '#edf5fb',
+    borderColor: '#8bb8d8',
+  },
+  toastText: {
+    color: '#15363a',
+    fontSize: 14,
+    fontWeight: '800',
+    textAlign: 'center',
   },
   authPage: {
     flex: 1,
@@ -906,6 +1405,16 @@ const styles = StyleSheet.create({
     gap: 12,
     padding: 14,
   },
+  vesselRow: {
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
+    borderColor: '#d7e4e5',
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 12,
+    padding: 14,
+  },
   tripIcon: {
     alignItems: 'center',
     backgroundColor: '#e5f1f2',
@@ -959,7 +1468,20 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingTop: 0,
   },
+  twoColumn: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  qualifyPanel: {
+    backgroundColor: '#ffffff',
+    borderColor: '#c9dada',
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 14,
+    padding: 12,
+  },
   field: {
+    flex: 1,
     marginBottom: 14,
   },
   fieldLabel: {
@@ -1001,6 +1523,17 @@ const styles = StyleSheet.create({
   },
   segmentTextSelected: {
     color: '#ffffff',
+  },
+  linkButton: {
+    alignItems: 'flex-start',
+    marginBottom: 14,
+    marginTop: 8,
+    paddingVertical: 8,
+  },
+  linkButtonText: {
+    color: '#176b75',
+    fontSize: 14,
+    fontWeight: '800',
   },
   saveButton: {
     alignItems: 'center',

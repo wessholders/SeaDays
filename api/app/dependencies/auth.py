@@ -20,11 +20,11 @@ def get_current_user(
     x_user_email: Optional[str] = Header(default=None, alias="X-User-Email"),
 ) -> AuthenticatedUser:
     settings = get_settings()
-    if authorization:
-        return _user_from_bearer_token(authorization)
-
     if settings.environment == "local" and x_profile_id and x_user_email:
         return _dev_user_from_headers(x_profile_id, x_user_email)
+
+    if authorization:
+        return _user_from_bearer_token(authorization)
 
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
