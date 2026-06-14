@@ -235,9 +235,11 @@ const purposeLabels: Record<PurposeType, string> = {
 
 const ownershipLabels: Record<string, string> = {
   owned: 'Owned',
-  borrowed: 'Not owned',
+  family_or_friend: 'Family or friend',
   employer: 'Employer',
   chartered: 'Chartered',
+  school: 'School',
+  crew: 'Crew',
   unknown: 'Unknown',
 };
 
@@ -329,7 +331,7 @@ class ApiRepository implements Repository {
     const identifiers = draft.registrationNumber.trim()
       ? [
           {
-            identifier_type: 'registration_number',
+            identifier_type: 'state_registration',
             identifier_value: draft.registrationNumber.trim(),
             issuing_country: 'US',
             is_primary: true,
@@ -392,8 +394,14 @@ class ApiRepository implements Repository {
       const message = await response.text();
       let detail = message;
       try {
-        const parsed = JSON.parse(message) as { detail?: string };
-        detail = parsed.detail ?? message;
+        const parsed = JSON.parse(message) as { detail?: string | { loc?: string[]; msg?: string }[] };
+        if (Array.isArray(parsed.detail)) {
+          detail = parsed.detail
+            .map((item) => `${item.loc?.join('.') ?? 'field'}: ${item.msg ?? 'Invalid value'}`)
+            .join('\n');
+        } else {
+          detail = parsed.detail ?? message;
+        }
       } catch {
         detail = message;
       }
@@ -430,7 +438,7 @@ class MockRepository implements Repository {
       identifiers: draft.registrationNumber.trim()
         ? [
             {
-              identifierType: 'registration_number',
+              identifierType: 'state_registration',
               identifierValue: draft.registrationNumber.trim(),
               isPrimary: true,
             },
