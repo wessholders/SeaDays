@@ -1,7 +1,7 @@
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createClient, Session } from '@supabase/supabase-js';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createElement, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -235,7 +235,7 @@ const initialTrips: Trip[] = [
 ];
 
 const waterTypeLabels: Record<WaterBodyType, string> = {
-  inland: 'Inland',
+  inland: 'Inshore',
   near_coastal: 'Near Coastal',
   offshore: 'Offshore',
   great_lakes: 'Great Lakes',
@@ -925,7 +925,7 @@ function TripModal({
   const [waterBodyName, setWaterBodyName] = useState('');
   const [serviceRole, setServiceRole] = useState<ServiceRole>('master');
   const [purposeType, setPurposeType] = useState<PurposeType>('recreational');
-  const [waterBodyType, setWaterBodyType] = useState<WaterBodyType>('near_coastal');
+  const [waterBodyType, setWaterBodyType] = useState<WaterBodyType>('inland');
 
   const underwayHours = useMemo(
     () => calculateUnderwayHours(tripDate, startTime, endTime),
@@ -1274,6 +1274,24 @@ function PickerInput({
   icon: keyof typeof MaterialCommunityIcons.glyphMap;
   webInputType: 'date' | 'time';
 }) {
+  const input =
+    Platform.OS === 'web'
+      ? createElement('input', {
+          type: webInputType,
+          value,
+          onChange: (event: { currentTarget: { value: string } }) => onChangeText(event.currentTarget.value),
+          style: webPickerInputStyle,
+          'aria-label': label,
+        })
+      : (
+          <TextInput
+            style={styles.pickerNativeInput}
+            value={value}
+            onChangeText={onChangeText}
+            keyboardType="default"
+          />
+        );
+
   return (
     <View style={styles.field}>
       <Text style={styles.fieldLabel}>{label}</Text>
@@ -1283,17 +1301,28 @@ function PickerInput({
           <Text style={styles.pickerDisplay}>{displayValue}</Text>
           <Text style={styles.pickerHint}>{webInputType === 'date' ? 'Open calendar' : 'Choose time'}</Text>
         </View>
-        <TextInput
-          style={styles.pickerNativeInput}
-          value={value}
-          onChangeText={onChangeText}
-          keyboardType="default"
-          {...(Platform.OS === 'web' ? { type: webInputType } : {})}
-        />
+        {input}
       </View>
     </View>
   );
 }
+
+const webPickerInputStyle: CSSProperties = {
+  backgroundColor: '#f4f8f8',
+  borderColor: '#d7e4e5',
+  borderRadius: 8,
+  borderStyle: 'solid',
+  borderWidth: 1,
+  color: '#0f3035',
+  cursor: 'pointer',
+  fontFamily: 'inherit',
+  fontSize: 16,
+  fontWeight: 800,
+  minHeight: 42,
+  minWidth: 150,
+  paddingLeft: 10,
+  paddingRight: 10,
+};
 
 function SegmentedOptions<T extends string>({
   label,
