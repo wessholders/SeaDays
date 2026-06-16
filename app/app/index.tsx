@@ -58,6 +58,12 @@ type Trip = {
   dayCount: number;
 };
 
+type Profile = {
+  id: string;
+  email: string;
+  displayName?: string;
+};
+
 type TripDraft = {
   vesselId: string;
   tripDate: string;
@@ -89,6 +95,7 @@ type VesselDraft = {
 
 type ActiveTab = 'dashboard' | 'logs' | 'vessels' | 'progress' | 'account';
 type InfoPageKey = 'about' | 'privacy' | 'terms' | 'accessibility' | 'contact';
+type TrendRange = '1M' | 'YTD' | '1Y' | '3Y';
 
 type SummaryMetrics = {
   totalDays: number;
@@ -110,6 +117,7 @@ type SummaryMetrics = {
 };
 
 type DashboardData = {
+  profile: Profile;
   vessels: Vessel[];
   trips: Trip[];
 };
@@ -117,6 +125,7 @@ type DashboardData = {
 type Repository = {
   label: string;
   loadDashboard: () => Promise<DashboardData>;
+  updateProfileDisplayName: (displayName: string) => Promise<Profile>;
   saveVessel: (draft: VesselDraft) => Promise<Vessel>;
   updateVessel: (vesselId: string, draft: VesselDraft) => Promise<Vessel>;
   saveTrip: (draft: TripDraft) => Promise<void>;
@@ -345,27 +354,93 @@ function tripHasMissingExportData(trip: Trip) {
   return !trip.vesselId || !trip.waterBodyName || !trip.startedAt || !trip.endedAt || !trip.underwayHours;
 }
 
-function buildTrendBuckets(trips: Trip[]) {
-  if (trips.length === 0) {
-    return [{ label: 'Now', outings: 0 }];
+const trendRangeOptions: { key: TrendRange; label: string }[] = [
+  { key: '1M', label: '1M' },
+  { key: 'YTD', label: 'YTD' },
+  { key: '1Y', label: '1Y' },
+  { key: '3Y', label: '3Y' },
+];
+
+function buildTrendBuckets(trips: Trip[], range: TrendRange) {
+  const referenceDate = latestTripDate(trips) ?? new Date();
+  const buckets: { key: string; label: string; outings: number }[] = [];
+
+  if (range === '1M') {
+    const start = startOfWeekMonday(addDays(referenceDate, -27));
+    const end = startOfWeekMonday(referenceDate);
+    for (let cursor = start; cursor <= end; cursor = addDays(cursor, 7)) {
+      buckets.push({ key: isoDateKey(cursor), label: formatShortDate(cursor), outings: 0 });
+    }
+
+    trips.forEach((trip) => {
+      const date = parseTripDate(trip.tripDate);
+      if (!date || date < start || date > referenceDate) {
+        return;
+      }
+
+      const key = isoDateKey(startOfWeekMonday(date));
+      const bucket = buckets.find((item) => item.key === key);
+      if (bucket) {
+        bucket.outings += 1;
+      }
+    });
+
+    return buckets;
   }
 
-  const sortedTrips = [...trips].sort((a, b) => a.tripDate.localeCompare(b.tripDate));
-  const first = new Date(`${sortedTrips[0].tripDate}T00:00:00`);
-  const last = new Date(`${sortedTrips[sortedTrips.length - 1].tripDate}T00:00:00`);
-  const daySpan = Math.max((last.getTime() - first.getTime()) / 86_400_000, 0);
-  const monthly = daySpan > 90;
-  const buckets: Record<string, number> = {};
+  const monthCount = range === 'YTD' ? referenceDate.getMonth() + 1 : range === '1Y' ? 12 : 36;
+  const start =
+    range === 'YTD'
+      ? new Date(referenceDate.getFullYear(), 0, 1)
+      : new Date(referenceDate.getFullYear(), referenceDate.getMonth() - monthCount + 1, 1);
 
-  sortedTrips.forEach((trip) => {
-    const date = new Date(`${trip.tripDate}T00:00:00`);
-    const label = monthly
-      ? date.toLocaleDateString(undefined, { month: 'short' })
-      : formatShortDate(startOfWeekMonday(date));
-    buckets[label] = (buckets[label] ?? 0) + 1;
+  for (let index = 0; index < monthCount; index += 1) {
+    const cursor = new Date(start.getFullYear(), start.getMonth() + index, 1);
+    buckets.push({
+      key: monthKey(cursor),
+      label: formatMonthLabel(cursor, range === 'YTD'),
+      outings: 0,
+    });
+  }
+
+  trips.forEach((trip) => {
+    const date = parseTripDate(trip.tripDate);
+    if (!date || date < start || date > referenceDate) {
+      return;
+    }
+
+    const bucket = buckets.find((item) => item.key === monthKey(date));
+    if (bucket) {
+      bucket.outings += 1;
+    }
   });
 
-  return Object.entries(buckets).map(([label, outings]) => ({ label, outings }));
+  return buckets;
+}
+
+function latestTripDate(trips: Trip[]) {
+  const dates = trips
+    .map((trip) => parseTripDate(trip.tripDate))
+    .filter((date): date is Date => Boolean(date))
+    .sort((a, b) => b.getTime() - a.getTime());
+
+  return dates[0];
+}
+
+function parseTripDate(value: string) {
+  const [year, month, day] = value.split('-').map(Number);
+  if (!year || !month || !day) {
+    return null;
+  }
+
+  const date = new Date(year, month - 1, day);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function addDays(date: Date, days: number) {
+  const result = new Date(date);
+  result.setDate(result.getDate() + days);
+  return result;
 }
 
 function startOfWeekMonday(date: Date) {
@@ -378,6 +453,42 @@ function startOfWeekMonday(date: Date) {
 
 function formatShortDate(date: Date) {
   return date.toLocaleDateString(undefined, { month: 'numeric', day: 'numeric' });
+}
+
+function monthKey(date: Date) {
+  return `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}`;
+}
+
+function isoDateKey(date: Date) {
+  return `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}-${date
+    .getDate()
+    .toString()
+    .padStart(2, '0')}`;
+}
+
+function formatMonthLabel(date: Date, omitYear: boolean) {
+  return date.toLocaleDateString(undefined, {
+    month: 'short',
+    year: omitYear ? undefined : '2-digit',
+  });
+}
+
+function trendPeriodLabel(range: TrendRange) {
+  return range === '1M' ? 'Weekly cadence' : 'Monthly cadence';
+}
+
+function trendLabelSample(buckets: { label: string; outings: number }[]) {
+  if (buckets.length <= 6) {
+    return buckets;
+  }
+
+  const indexes = new Set([0, Math.floor((buckets.length - 1) / 2), buckets.length - 1]);
+  if (buckets.length > 12) {
+    indexes.add(Math.floor((buckets.length - 1) / 3));
+    indexes.add(Math.floor(((buckets.length - 1) * 2) / 3));
+  }
+
+  return buckets.filter((_, index) => indexes.has(index));
 }
 
 function buildLineChartStyle(buckets: { label: string; outings: number }[]): CSSProperties {
@@ -470,6 +581,12 @@ const initialTrips: Trip[] = [
     dayCount: 1,
   },
 ];
+
+const initialProfile: Profile = {
+  id: 'mock-profile',
+  email: 'tester@seadays.local',
+  displayName: 'SeaDays Tester',
+};
 
 const waterTypeLabels: Record<WaterBodyType, string> = {
   inland: 'Inshore',
@@ -662,21 +779,41 @@ function mapTrip(row: Record<string, unknown>): Trip {
   };
 }
 
+function mapProfile(row: Record<string, unknown>): Profile {
+  return {
+    id: String(row.id ?? ''),
+    email: String(row.email ?? ''),
+    displayName: row.display_name ? String(row.display_name) : undefined,
+  };
+}
+
 class ApiRepository implements Repository {
   label = 'Supabase API';
 
   constructor(private readonly session: Session) {}
 
   async loadDashboard(): Promise<DashboardData> {
-    await this.request('/v1/profile');
-    const [vessels, trips] = await Promise.all([
+    const [profile, vessels, trips] = await Promise.all([
+      this.request('/v1/profile'),
       this.request('/v1/vessels'),
       this.request('/v1/trips'),
     ]);
     return {
+      profile: mapProfile(profile as Record<string, unknown>),
       vessels: (vessels as Record<string, unknown>[]).map(mapVessel),
       trips: (trips as Record<string, unknown>[]).map(mapTrip),
     };
+  }
+
+  async updateProfileDisplayName(displayName: string): Promise<Profile> {
+    const updated = await this.request('/v1/profile', {
+      method: 'PATCH',
+      body: {
+        display_name: displayName.trim() || null,
+      },
+    });
+
+    return mapProfile(updated as Record<string, unknown>);
   }
 
   async saveVessel(draft: VesselDraft): Promise<Vessel> {
@@ -743,11 +880,21 @@ class ApiRepository implements Repository {
 
 class MockRepository implements Repository {
   label = 'Mock workspace';
+  private profile = initialProfile;
   private vessels = initialVessels;
   private trips = initialTrips;
 
   async loadDashboard(): Promise<DashboardData> {
-    return { vessels: this.vessels, trips: this.trips };
+    return { profile: this.profile, vessels: this.vessels, trips: this.trips };
+  }
+
+  async updateProfileDisplayName(displayName: string): Promise<Profile> {
+    this.profile = {
+      ...this.profile,
+      displayName: displayName.trim() || undefined,
+    };
+
+    return this.profile;
   }
 
   async saveVessel(draft: VesselDraft): Promise<Vessel> {
@@ -1014,6 +1161,7 @@ function AuthScreen() {
 
 function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOut?: () => void }) {
   const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
+  const [profile, setProfile] = useState<Profile | null>(null);
   const [vessels, setVessels] = useState<Vessel[]>([]);
   const [trips, setTrips] = useState<Trip[]>([]);
   const [loading, setLoading] = useState(true);
@@ -1049,6 +1197,7 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
     showToast('Loading dashboard...', 'info', false);
     try {
       const data = await repository.loadDashboard();
+      setProfile(data.profile);
       setVessels(data.vessels);
       setTrips(data.trips);
       showToast('Dashboard updated.', 'success');
@@ -1102,7 +1251,7 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
       totalRemaining: Math.max(360 - totalDays, 0),
       progressValue: Math.min(totalDays / 360, 1),
     };
-  }, [trips, vessels.length]);
+  }, [trips, vessels]);
 
   async function saveTrip(draft: TripDraft) {
     showToast('Saving trip...', 'info', false);
@@ -1139,6 +1288,19 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
       const message = error instanceof Error ? error.message : 'Try again.';
       showToast(`Vessel save failed: ${message}`, 'error');
       Alert.alert('Vessel save failed', message);
+    }
+  }
+
+  async function saveDisplayName(displayName: string) {
+    showToast('Saving display name...', 'info', false);
+    try {
+      const updatedProfile = await repository.updateProfileDisplayName(displayName);
+      setProfile(updatedProfile);
+      showToast('Display name updated.', 'success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Try again.';
+      showToast(`Profile save failed: ${message}`, 'error');
+      Alert.alert('Profile save failed', message);
     }
   }
 
@@ -1272,7 +1434,13 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
         ) : activeTab === 'progress' ? (
           <ProgressPage progress={progress} trips={trips} vessels={vessels} />
         ) : (
-          <AccountPage repositoryLabel={repository.label} onOpenInfo={setInfoPage} onSignOut={onSignOut} />
+          <AccountPage
+            profile={profile}
+            repositoryLabel={repository.label}
+            onOpenInfo={setInfoPage}
+            onSaveDisplayName={saveDisplayName}
+            onSignOut={onSignOut}
+          />
         )}
         <InfoFooter onOpen={setInfoPage} />
       </ScrollView>
@@ -1331,14 +1499,51 @@ function MetricPanel({ title, rows }: { title: string; rows: [string, string][] 
 }
 
 function TrendChart({ trips }: { trips: Trip[] }) {
-  const buckets = useMemo(() => buildTrendBuckets(trips), [trips]);
+  const [range, setRange] = useState<TrendRange>('YTD');
+  const buckets = useMemo(() => buildTrendBuckets(trips, range), [range, trips]);
   const lineStyle = useMemo(() => buildLineChartStyle(buckets), [buckets]);
+  const labelSample = useMemo(() => trendLabelSample(buckets), [buckets]);
+  const totalOutings = buckets.reduce((sum, bucket) => sum + bucket.outings, 0);
+  const peakOutings = Math.max(...buckets.map((bucket) => bucket.outings), 0);
+  const latestOutings = buckets[buckets.length - 1]?.outings ?? 0;
 
   return (
     <View style={[styles.chartPanel, styles.chartPanelWide]}>
       <View style={styles.chartHeader}>
-        <Text style={styles.chartTitle}>Outing Frequency</Text>
-        <Text style={styles.chartMeta}>{buckets.length > 8 ? 'Monthly' : 'Weekly'}</Text>
+        <View>
+          <Text style={styles.chartTitle}>Outing Frequency</Text>
+          <Text style={styles.chartMeta}>{trendPeriodLabel(range)}</Text>
+        </View>
+        <View style={styles.rangeSelector}>
+          {trendRangeOptions.map((option) => {
+            const selected = option.key === range;
+            return (
+              <Pressable
+                key={option.key}
+                style={[styles.rangeButton, selected && styles.rangeButtonActive]}
+                onPress={() => setRange(option.key)}
+              >
+                <Text style={[styles.rangeButtonText, selected && styles.rangeButtonTextActive]}>
+                  {option.label}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+      <View style={styles.trendStatRow}>
+        <View style={styles.trendStat}>
+          <Text style={styles.metricLabel}>Range total</Text>
+          <Text style={styles.trendStatValue}>{totalOutings}</Text>
+        </View>
+        <View style={styles.trendStat}>
+          <Text style={styles.metricLabel}>Peak period</Text>
+          <Text style={styles.trendStatValue}>{peakOutings}</Text>
+        </View>
+        <View style={styles.trendStat}>
+          <Text style={styles.metricLabel}>Latest period</Text>
+          <Text style={styles.trendStatValue}>{latestOutings}</Text>
+        </View>
       </View>
       <View style={styles.lineChartShell}>
         {Platform.OS === 'web'
@@ -1346,7 +1551,7 @@ function TrendChart({ trips }: { trips: Trip[] }) {
           : <View style={styles.lineFallback} />}
       </View>
       <View style={styles.trendLabels}>
-        {buckets.map((bucket) => (
+        {labelSample.map((bucket) => (
           <View key={bucket.label} style={styles.trendLabelItem}>
             <Text style={styles.trendLabel}>{bucket.label}</Text>
             <Text style={styles.trendValue}>{bucket.outings} outing{bucket.outings === 1 ? '' : 's'}</Text>
@@ -1530,20 +1735,58 @@ function ProgressPage({ progress, trips, vessels }: { progress: SummaryMetrics; 
 }
 
 function AccountPage({
+  profile,
   repositoryLabel,
   onOpenInfo,
+  onSaveDisplayName,
   onSignOut,
 }: {
+  profile: Profile | null;
   repositoryLabel: string;
   onOpenInfo: (page: InfoPageKey) => void;
+  onSaveDisplayName: (displayName: string) => Promise<void>;
   onSignOut?: () => void;
 }) {
+  const [displayName, setDisplayName] = useState(profile?.displayName ?? '');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setDisplayName(profile?.displayName ?? '');
+  }, [profile?.displayName]);
+
+  async function submitDisplayName() {
+    setSaving(true);
+    try {
+      await onSaveDisplayName(displayName);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <View style={styles.tabPage}>
       <View style={styles.progressPanel}>
         <Text style={styles.panelTitle}>Account</Text>
-        <Text style={styles.sectionSubtitle}>Manage product information, support, and compliance pages.</Text>
+        <Text style={styles.sectionSubtitle}>Manage your SeaDays profile, support, and compliance pages.</Text>
+        <View style={styles.accountForm}>
+          <LabeledInput
+            label="Display name"
+            value={displayName}
+            onChangeText={setDisplayName}
+            placeholder="How SeaDays should greet you"
+          />
+          <Pressable style={styles.primaryButton} onPress={submitDisplayName} disabled={saving}>
+            {saving ? (
+              <ActivityIndicator color="#ffffff" />
+            ) : (
+              <MaterialCommunityIcons name="content-save-outline" size={18} color="#ffffff" />
+            )}
+            <Text style={styles.primaryButtonText}>Save</Text>
+          </Pressable>
+        </View>
         <View style={styles.metricGrid}>
+          <Metric label="Display name" value={profile?.displayName || 'Not set'} />
+          <Metric label="Email" value={profile?.email || 'Not loaded'} />
           <Metric label="Workspace" value={repositoryLabel} />
           <Metric label="Theme" value="Light" />
           <Metric label="Status" value="Testing" />
@@ -2399,11 +2642,14 @@ const styles = StyleSheet.create({
     padding: 12,
   },
   chartPanelWide: {
-    flexBasis: '100%',
+    flexBasis: 540,
+    flexGrow: 2,
   },
   chartHeader: {
     alignItems: 'center',
     flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
     justifyContent: 'space-between',
   },
   chartTitle: {
@@ -2415,6 +2661,55 @@ const styles = StyleSheet.create({
     color: '#557174',
     fontSize: 12,
     fontWeight: '800',
+    marginTop: 2,
+  },
+  rangeSelector: {
+    backgroundColor: '#eef6f4',
+    borderColor: '#d7e4e5',
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 4,
+    padding: 4,
+  },
+  rangeButton: {
+    borderRadius: 7,
+    minHeight: 32,
+    minWidth: 44,
+    paddingHorizontal: 10,
+    justifyContent: 'center',
+  },
+  rangeButtonActive: {
+    backgroundColor: '#0f6570',
+  },
+  rangeButtonText: {
+    color: '#176b75',
+    fontSize: 12,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+  rangeButtonTextActive: {
+    color: '#ffffff',
+  },
+  trendStatRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 12,
+  },
+  trendStat: {
+    backgroundColor: '#eef6f4',
+    borderRadius: 8,
+    flexBasis: 130,
+    flexGrow: 1,
+    paddingHorizontal: 10,
+    paddingVertical: 9,
+  },
+  trendStatValue: {
+    color: '#092f35',
+    fontSize: 18,
+    fontWeight: '900',
+    marginTop: 2,
   },
   lineChartShell: {
     backgroundColor: '#ffffff',
@@ -2685,6 +2980,13 @@ const styles = StyleSheet.create({
     color: '#0b2f35',
     fontSize: 15,
     fontWeight: '900',
+  },
+  accountForm: {
+    alignItems: 'flex-end',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginTop: 14,
   },
   tripRow: {
     alignItems: 'center',

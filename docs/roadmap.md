@@ -28,7 +28,7 @@
 
 ## Phase 3: Submission Prep
 
-- CG-719S mapping.
+- CG-719S mapping. See [CG-719S Generation Plan](cg-719s-generation.md).
 - Submission package checklist.
 - Form data review screen.
 - Generated PDF package storage.
