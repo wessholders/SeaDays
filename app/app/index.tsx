@@ -87,8 +87,27 @@ type VesselDraft = {
   propulsionType: string;
 };
 
-type ActiveTab = 'dashboard' | 'vessels';
+type ActiveTab = 'dashboard' | 'logs' | 'vessels' | 'progress' | 'account';
 type InfoPageKey = 'about' | 'privacy' | 'terms' | 'accessibility' | 'contact';
+
+type SummaryMetrics = {
+  totalDays: number;
+  totalEntries: number;
+  totalHours: number;
+  totalLoggedDays: number;
+  recentDays: number;
+  nearCoastalDays: number;
+  vesselCount: number;
+  averageHours: number;
+  lastTripDate: string;
+  qualifyingRate: number;
+  missingDataCount: number;
+  signatureNeededCount: number;
+  exportReadyCount: number;
+  exportReadiness: number;
+  totalRemaining: number;
+  progressValue: number;
+};
 
 type DashboardData = {
   vessels: Vessel[];
@@ -314,6 +333,18 @@ function percent(value: number, total: number) {
   return Math.round((value / total) * 100);
 }
 
+function vesselNeedsOwnerSignature(vessel?: Vessel) {
+  if (!vessel) {
+    return false;
+  }
+
+  return vessel.ownershipType !== 'owned' && vessel.ownershipType !== 'unknown';
+}
+
+function tripHasMissingExportData(trip: Trip) {
+  return !trip.vesselId || !trip.waterBodyName || !trip.startedAt || !trip.endedAt || !trip.underwayHours;
+}
+
 function buildTrendBuckets(trips: Trip[]) {
   if (trips.length === 0) {
     return [{ label: 'Now', outings: 0 }];
@@ -449,6 +480,14 @@ const waterTypeLabels: Record<WaterBodyType, string> = {
 };
 
 const chartColors = ['#176b75', '#7c9a42', '#d48b36', '#8a6fb0', '#4f7fb8', '#b45562'];
+
+const navItems: { key: ActiveTab; label: string; icon: keyof typeof MaterialCommunityIcons.glyphMap }[] = [
+  { key: 'dashboard', label: 'Dashboard', icon: 'view-dashboard-outline' },
+  { key: 'logs', label: 'Logs', icon: 'notebook-outline' },
+  { key: 'vessels', label: 'Vessels', icon: 'ferry' },
+  { key: 'progress', label: 'Progress', icon: 'chart-timeline-variant' },
+  { key: 'account', label: 'Account', icon: 'account-circle-outline' },
+];
 
 const infoPages: Record<InfoPageKey, { title: string; sections: { heading: string; body: string }[] }> = {
   about: {
@@ -1026,7 +1065,7 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
     loadDashboard();
   }, [loadDashboard]);
 
-  const progress = useMemo(() => {
+  const progress = useMemo<SummaryMetrics>(() => {
     const totalDays = trips.reduce((sum, trip) => sum + trip.dayCount, 0);
     const totalEntries = trips.length;
     const totalHours = trips.reduce((sum, trip) => sum + (trip.underwayHours ?? 0), 0);
@@ -1037,6 +1076,13 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
       .reduce((sum, trip) => sum + trip.dayCount, 0);
     const lastTrip = [...trips].sort((a, b) => b.tripDate.localeCompare(a.tripDate))[0];
     const qualifyingRate = percent(totalDays, totalEntries);
+    const missingDataCount = trips.filter(tripHasMissingExportData).length;
+    const signatureNeededCount = trips.filter((trip) => {
+      const vessel = vessels.find((item) => item.id === trip.vesselId);
+      return vesselNeedsOwnerSignature(vessel);
+    }).length;
+    const exportReadyCount = Math.max(totalEntries - missingDataCount, 0);
+    const exportReadiness = percent(exportReadyCount, totalEntries);
 
     return {
       totalDays,
@@ -1049,6 +1095,10 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
       averageHours: totalEntries > 0 ? totalHours / totalEntries : 0,
       lastTripDate: lastTrip?.tripDate ?? 'None',
       qualifyingRate,
+      missingDataCount,
+      signatureNeededCount,
+      exportReadyCount,
+      exportReadiness,
       totalRemaining: Math.max(360 - totalDays, 0),
       progressValue: Math.min(totalDays / 360, 1),
     };
@@ -1125,35 +1175,30 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
         </View>
 
         <View style={styles.ribbon}>
-          <Pressable
-            style={[styles.ribbonButton, activeTab === 'dashboard' && styles.ribbonButtonActive]}
-            onPress={() => {
-              setActiveTab('dashboard');
-              setSelectedVessel(null);
-            }}
-          >
-            <MaterialCommunityIcons
-              name="view-dashboard-outline"
-              size={20}
-              color={activeTab === 'dashboard' ? '#ffffff' : '#176b75'}
-            />
-            <Text style={[styles.ribbonButtonText, activeTab === 'dashboard' && styles.ribbonButtonTextActive]}>
-              Dashboard
-            </Text>
-          </Pressable>
-          <Pressable
-            style={[styles.ribbonButton, activeTab === 'vessels' && styles.ribbonButtonActive]}
-            onPress={() => setActiveTab('vessels')}
-          >
-            <MaterialCommunityIcons
-              name="ferry"
-              size={20}
-              color={activeTab === 'vessels' ? '#ffffff' : '#176b75'}
-            />
-            <Text style={[styles.ribbonButtonText, activeTab === 'vessels' && styles.ribbonButtonTextActive]}>
-              Vessels
-            </Text>
-          </Pressable>
+          {navItems.map((item) => {
+            const selected = activeTab === item.key;
+            return (
+              <Pressable
+                key={item.key}
+                style={[styles.ribbonButton, selected && styles.ribbonButtonActive]}
+                onPress={() => {
+                  setActiveTab(item.key);
+                  if (item.key !== 'vessels') {
+                    setSelectedVessel(null);
+                  }
+                }}
+              >
+                <MaterialCommunityIcons
+                  name={item.icon}
+                  size={20}
+                  color={selected ? '#ffffff' : '#176b75'}
+                />
+                <Text style={[styles.ribbonButtonText, selected && styles.ribbonButtonTextActive]}>
+                  {item.label}
+                </Text>
+              </Pressable>
+            );
+          })}
         </View>
 
         {activeTab === 'dashboard' ? (
@@ -1170,8 +1215,8 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
             <Metric label="Qualifying sea days" value={progress.totalDays.toFixed(1)} />
             <Metric label="Total outings" value={progress.totalLoggedDays.toFixed(0)} />
             <Metric label="Hours logged" value={progress.totalHours.toFixed(1)} />
-            <Metric label="Vessels" value={progress.vesselCount.toFixed(0)} />
-            <Metric label="Avg hours" value={progress.averageHours.toFixed(1)} />
+            <Metric label="Export ready" value={`${progress.exportReadiness}%`} />
+            <Metric label="Owner signatures" value={progress.signatureNeededCount.toString()} />
             <Metric label="Last outing" value={progress.lastTripDate} />
           </View>
           <View style={styles.dashboardGrid}>
@@ -1188,56 +1233,26 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
               title="Interesting"
               rows={[
                 ['Remaining days', progress.totalRemaining.toFixed(1)],
-                ['Coastal+ days', progress.nearCoastalDays.toFixed(1)],
-                ['Qualifying rate', `${progress.qualifyingRate}%`],
+                ['Missing data', progress.missingDataCount.toString()],
+                ['Known vessels', progress.vesselCount.toString()],
               ]}
             />
           </View>
         </View>
 
-        <View style={styles.sectionHeader}>
-          <Text style={styles.sectionTitle}>Trips</Text>
-          <Pressable style={styles.primaryButton} onPress={() => setShowTripModal(true)}>
-            <MaterialCommunityIcons name="plus" size={18} color="#ffffff" />
-            <Text style={styles.primaryButtonText}>Log Trip</Text>
-          </Pressable>
-        </View>
-
-        {loading ? <ActivityIndicator color="#176b75" /> : null}
-        {!loading && trips.length === 0 ? <Text style={styles.emptyText}>No trips yet.</Text> : null}
-
-        {trips.map((trip) => {
-          const vessel = vessels.find((item) => item.id === trip.vesselId);
-          return (
-            <Pressable
-              key={trip.id}
-              style={styles.tripRow}
-              onPress={() => {
-                setEditingTrip(trip);
-                setShowTripModal(true);
-              }}
-            >
-              <View style={styles.tripIcon}>
-                <MaterialCommunityIcons name="sail-boat" size={22} color="#176b75" />
-              </View>
-              <View style={styles.tripBody}>
-                <Text style={styles.tripTitle}>{vessel?.displayName ?? vessel?.name ?? 'Unknown vessel'}</Text>
-                <Text style={styles.tripMeta}>
-                  {trip.tripDate} - {roleLabels[trip.serviceRole]} - {waterTypeLabels[trip.waterBodyType]}
-                </Text>
-                <Text style={styles.tripMeta}>
-                  {trip.waterBodyName || 'No water body'} - {(trip.underwayHours ?? 0).toFixed(1)} hours
-                </Text>
-              </View>
-              <View style={styles.tripActionColumn}>
-                <Text style={styles.dayCount}>{trip.dayCount.toFixed(1)} d</Text>
-                <MaterialCommunityIcons name="pencil" size={18} color="#176b75" />
-              </View>
-            </Pressable>
-          );
-        })}
           </>
-        ) : (
+        ) : activeTab === 'logs' ? (
+          <LogsPage
+            trips={trips}
+            vessels={vessels}
+            loading={loading}
+            onAdd={() => setShowTripModal(true)}
+            onEdit={(trip) => {
+              setEditingTrip(trip);
+              setShowTripModal(true);
+            }}
+          />
+        ) : activeTab === 'vessels' ? (
           <VesselsPage
             vessels={vessels}
             selectedVessel={selectedVessel}
@@ -1254,6 +1269,10 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
               setShowVesselModal(true);
             }}
           />
+        ) : activeTab === 'progress' ? (
+          <ProgressPage progress={progress} trips={trips} vessels={vessels} />
+        ) : (
+          <AccountPage repositoryLabel={repository.label} onOpenInfo={setInfoPage} onSignOut={onSignOut} />
         )}
         <InfoFooter onOpen={setInfoPage} />
       </ScrollView>
@@ -1384,6 +1403,166 @@ function BreakdownChart({ title, items }: { title: string; items: string[] }) {
           </View>
         );
       })}
+    </View>
+  );
+}
+
+function LogsPage({
+  trips,
+  vessels,
+  loading,
+  onAdd,
+  onEdit,
+}: {
+  trips: Trip[];
+  vessels: Vessel[];
+  loading: boolean;
+  onAdd: () => void;
+  onEdit: (trip: Trip) => void;
+}) {
+  const qualifying = trips.filter((trip) => trip.dayCount > 0).length;
+  const missing = trips.filter(tripHasMissingExportData).length;
+
+  return (
+    <View style={styles.tabPage}>
+      <View style={styles.sectionHeader}>
+        <View>
+          <Text style={styles.sectionTitle}>Logs</Text>
+          <Text style={styles.sectionSubtitle}>Review, edit, and prepare sea-service entries.</Text>
+        </View>
+        <Pressable style={styles.primaryButton} onPress={onAdd}>
+          <MaterialCommunityIcons name="plus" size={18} color="#ffffff" />
+          <Text style={styles.primaryButtonText}>Log Trip</Text>
+        </Pressable>
+      </View>
+
+      <View style={styles.metricGrid}>
+        <Metric label="Entries" value={trips.length.toString()} />
+        <Metric label="Qualifying" value={qualifying.toString()} />
+        <Metric label="Needs review" value={missing.toString()} />
+      </View>
+
+      {loading ? <ActivityIndicator color="#176b75" /> : null}
+      {!loading && trips.length === 0 ? <Text style={styles.emptyText}>No trips yet.</Text> : null}
+
+      {trips.map((trip) => (
+        <TripListRow
+          key={trip.id}
+          trip={trip}
+          vessel={vessels.find((item) => item.id === trip.vesselId)}
+          onPress={() => onEdit(trip)}
+        />
+      ))}
+    </View>
+  );
+}
+
+function TripListRow({ trip, vessel, onPress }: { trip: Trip; vessel?: Vessel; onPress: () => void }) {
+  return (
+    <Pressable style={styles.tripRow} onPress={onPress}>
+      <View style={styles.tripIcon}>
+        <MaterialCommunityIcons name="sail-boat" size={22} color="#176b75" />
+      </View>
+      <View style={styles.tripBody}>
+        <Text style={styles.tripTitle}>{vessel?.displayName ?? vessel?.name ?? 'Unknown vessel'}</Text>
+        <Text style={styles.tripMeta}>
+          {trip.tripDate} - {roleLabels[trip.serviceRole]} - {waterTypeLabels[trip.waterBodyType]}
+        </Text>
+        <Text style={styles.tripMeta}>
+          {trip.waterBodyName || 'No water body'} - {(trip.underwayHours ?? 0).toFixed(1)} hours
+        </Text>
+      </View>
+      <View style={styles.tripActionColumn}>
+        <Text style={styles.dayCount}>{trip.dayCount.toFixed(1)} d</Text>
+        <MaterialCommunityIcons name="pencil" size={18} color="#176b75" />
+      </View>
+    </Pressable>
+  );
+}
+
+function ProgressPage({ progress, trips, vessels }: { progress: SummaryMetrics; trips: Trip[]; vessels: Vessel[] }) {
+  return (
+    <View style={styles.tabPage}>
+      <View style={styles.progressPanel}>
+        <View style={styles.panelHeader}>
+          <Text style={styles.panelTitle}>OUPV / Six-Pack Progress</Text>
+          <Text style={styles.panelBadge}>{Math.round(progress.progressValue * 100)}%</Text>
+        </View>
+        <View style={styles.progressTrack}>
+          <View style={[styles.progressFill, { width: `${progress.progressValue * 100}%` }]} />
+        </View>
+        <View style={styles.metricGrid}>
+          <Metric label="Qualifying days" value={progress.totalDays.toFixed(1)} />
+          <Metric label="Remaining" value={progress.totalRemaining.toFixed(1)} />
+          <Metric label="Hours" value={progress.totalHours.toFixed(1)} />
+          <Metric label="Coastal+" value={progress.nearCoastalDays.toFixed(1)} />
+        </View>
+      </View>
+
+      <View style={styles.dashboardGrid}>
+        <MetricPanel
+          title="Export Readiness"
+          rows={[
+            ['Ready logs', progress.exportReadyCount.toString()],
+            ['Needs data review', progress.missingDataCount.toString()],
+            ['Readiness', `${progress.exportReadiness}%`],
+          ]}
+        />
+        <MetricPanel
+          title="Owner Signatures"
+          rows={[
+            ['Likely needed', progress.signatureNeededCount.toString()],
+            ['Known vessels', vessels.length.toString()],
+            ['Logged trips', trips.length.toString()],
+          ]}
+        />
+        <MetricPanel
+          title="Credential Signals"
+          rows={[
+            ['Qualifying rate', `${progress.qualifyingRate}%`],
+            ['Average hours', progress.averageHours.toFixed(1)],
+            ['Last outing', progress.lastTripDate],
+          ]}
+        />
+      </View>
+    </View>
+  );
+}
+
+function AccountPage({
+  repositoryLabel,
+  onOpenInfo,
+  onSignOut,
+}: {
+  repositoryLabel: string;
+  onOpenInfo: (page: InfoPageKey) => void;
+  onSignOut?: () => void;
+}) {
+  return (
+    <View style={styles.tabPage}>
+      <View style={styles.progressPanel}>
+        <Text style={styles.panelTitle}>Account</Text>
+        <Text style={styles.sectionSubtitle}>Manage product information, support, and compliance pages.</Text>
+        <View style={styles.metricGrid}>
+          <Metric label="Workspace" value={repositoryLabel} />
+          <Metric label="Theme" value="Light" />
+          <Metric label="Status" value="Testing" />
+        </View>
+      </View>
+      <View style={styles.dashboardGrid}>
+        {(['about', 'privacy', 'terms', 'accessibility', 'contact'] as InfoPageKey[]).map((key) => (
+          <Pressable key={key} style={styles.accountLink} onPress={() => onOpenInfo(key)}>
+            <MaterialCommunityIcons name="file-document-outline" size={22} color="#176b75" />
+            <Text style={styles.accountLinkText}>{infoPages[key].title}</Text>
+          </Pressable>
+        ))}
+      </View>
+      {onSignOut ? (
+        <Pressable style={styles.secondaryActionButton} onPress={onSignOut}>
+          <MaterialCommunityIcons name="logout" size={20} color="#176b75" />
+          <Text style={styles.secondaryActionText}>Sign out</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }
@@ -1995,17 +2174,20 @@ function SegmentedOptions<T extends string>({
 const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
-    backgroundColor: '#f4f7f7',
+    backgroundColor: '#eef3f2',
   },
   centeredPage: {
     alignItems: 'center',
-    backgroundColor: '#f4f7f7',
+    backgroundColor: '#eef3f2',
     flex: 1,
     justifyContent: 'center',
   },
   page: {
+    alignSelf: 'center',
     gap: 16,
+    maxWidth: 1180,
     padding: 16,
+    width: '100%',
   },
   toast: {
     alignSelf: 'center',
@@ -2067,17 +2249,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
     justifyContent: 'space-between',
+    paddingVertical: 4,
   },
   headerActions: {
     flexDirection: 'row',
     gap: 8,
   },
   ribbon: {
-    backgroundColor: '#e7f1f2',
-    borderColor: '#c6dcdf',
+    backgroundColor: '#f8fbf7',
+    borderColor: '#c7d8d3',
     borderRadius: 8,
     borderWidth: 1,
     flexDirection: 'row',
+    flexWrap: 'wrap',
     gap: 8,
     padding: 6,
   },
@@ -2090,7 +2274,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
   },
   ribbonButtonActive: {
-    backgroundColor: '#176b75',
+    backgroundColor: '#0f6570',
   },
   ribbonButtonText: {
     color: '#176b75',
@@ -2100,19 +2284,21 @@ const styles = StyleSheet.create({
     color: '#ffffff',
   },
   eyebrow: {
-    color: '#577174',
+    color: '#5d746f',
     fontSize: 13,
     fontWeight: '700',
     textTransform: 'uppercase',
   },
   title: {
-    color: '#092f35',
+    color: '#0b2f35',
     fontSize: 34,
     fontWeight: '800',
   },
   iconButton: {
     alignItems: 'center',
-    backgroundColor: '#e4eeee',
+    backgroundColor: '#f8fbf7',
+    borderColor: '#c7d8d3',
+    borderWidth: 1,
     borderRadius: 8,
     height: 44,
     justifyContent: 'center',
@@ -2120,7 +2306,9 @@ const styles = StyleSheet.create({
   },
   iconButtonSmall: {
     alignItems: 'center',
-    backgroundColor: '#e4eeee',
+    backgroundColor: '#f8fbf7',
+    borderColor: '#c7d8d3',
+    borderWidth: 1,
     borderRadius: 8,
     height: 38,
     justifyContent: 'center',
@@ -2128,15 +2316,17 @@ const styles = StyleSheet.create({
   },
   secondaryIconButton: {
     alignItems: 'center',
-    backgroundColor: '#e4eeee',
+    backgroundColor: '#f8fbf7',
+    borderColor: '#c7d8d3',
+    borderWidth: 1,
     borderRadius: 8,
     height: 42,
     justifyContent: 'center',
     width: 42,
   },
   progressPanel: {
-    backgroundColor: '#ffffff',
-    borderColor: '#d7e4e5',
+    backgroundColor: '#fbfdf8',
+    borderColor: '#c5d6d2',
     borderRadius: 8,
     borderWidth: 1,
     padding: 16,
@@ -2166,7 +2356,7 @@ const styles = StyleSheet.create({
     overflow: 'hidden',
   },
   progressFill: {
-    backgroundColor: '#1b7f8a',
+    backgroundColor: '#0f6570',
     height: '100%',
   },
   metricGrid: {
@@ -2176,7 +2366,7 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
   },
   metric: {
-    backgroundColor: '#f1f7f7',
+    backgroundColor: '#eef6f4',
     borderRadius: 8,
     flexBasis: 150,
     flexGrow: 1,
@@ -2200,8 +2390,8 @@ const styles = StyleSheet.create({
     marginTop: 16,
   },
   chartPanel: {
-    backgroundColor: '#f7fbfb',
-    borderColor: '#d7e4e5',
+    backgroundColor: '#fbfdf8',
+    borderColor: '#c5d6d2',
     borderRadius: 8,
     borderWidth: 1,
     flexBasis: 260,
@@ -2434,9 +2624,15 @@ const styles = StyleSheet.create({
     fontSize: 22,
     fontWeight: '800',
   },
+  sectionSubtitle: {
+    color: '#5d746f',
+    fontSize: 14,
+    fontWeight: '700',
+    marginTop: 3,
+  },
   primaryButton: {
     alignItems: 'center',
-    backgroundColor: '#176b75',
+    backgroundColor: '#0f6570',
     borderRadius: 8,
     flexDirection: 'row',
     gap: 6,
@@ -2455,6 +2651,40 @@ const styles = StyleSheet.create({
   secondaryButtonText: {
     color: '#176b75',
     fontWeight: '800',
+  },
+  secondaryActionButton: {
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: '#f8fbf7',
+    borderColor: '#c7d8d3',
+    borderRadius: 8,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: 8,
+    minHeight: 46,
+    paddingHorizontal: 14,
+  },
+  secondaryActionText: {
+    color: '#176b75',
+    fontWeight: '900',
+  },
+  accountLink: {
+    alignItems: 'center',
+    backgroundColor: '#fbfdf8',
+    borderColor: '#c5d6d2',
+    borderRadius: 8,
+    borderWidth: 1,
+    flexBasis: 220,
+    flexDirection: 'row',
+    flexGrow: 1,
+    gap: 10,
+    minHeight: 58,
+    padding: 14,
+  },
+  accountLinkText: {
+    color: '#0b2f35',
+    fontSize: 15,
+    fontWeight: '900',
   },
   tripRow: {
     alignItems: 'center',
