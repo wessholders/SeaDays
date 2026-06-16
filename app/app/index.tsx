@@ -1279,10 +1279,12 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
       setVessels(data.vessels);
       setTrips(data.trips);
       showToast('Dashboard updated.', 'success');
+      return data;
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Try again.';
       showToast(`Load failed: ${message}`, 'error');
       Alert.alert('Load failed', message);
+      return undefined;
     } finally {
       setLoading(false);
     }
@@ -1361,9 +1363,10 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
         : await repository.saveVessel(draft);
       setShowVesselModal(false);
       setEditingVessel(null);
-      setSelectedVessel(vessel);
       setActiveTab('vessels');
-      await loadDashboard();
+      const refreshedData = await loadDashboard();
+      const refreshedVessel = refreshedData?.vessels.find((item) => item.id === vessel.id);
+      setSelectedVessel(refreshedVessel ?? vessel);
       showToast(`${vessel.displayName ?? vessel.name} ${editingVessel ? 'updated' : 'saved'}.`, 'success');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Try again.';
@@ -1387,18 +1390,6 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      {toast ? (
-        <View
-          style={[
-            styles.toast,
-            toast.tone === 'success' && styles.toastSuccess,
-            toast.tone === 'error' && styles.toastError,
-            toast.tone === 'info' && styles.toastInfo,
-          ]}
-        >
-          <Text style={styles.toastText}>{toast.message}</Text>
-        </View>
-      ) : null}
       <ScrollView contentContainerStyle={styles.page}>
         <View style={styles.header}>
           <View>
@@ -1552,7 +1543,29 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
         editingVessel={editingVessel}
       />
       <InfoModal pageKey={infoPage} onClose={() => setInfoPage(null)} />
+      <ToastOverlay toast={toast} />
     </SafeAreaView>
+  );
+}
+
+function ToastOverlay({ toast }: { toast: { message: string; tone: 'success' | 'error' | 'info' } | null }) {
+  return (
+    <Modal visible={Boolean(toast)} animationType="fade" transparent onRequestClose={() => undefined}>
+      <SafeAreaView pointerEvents="none" style={styles.toastOverlay}>
+        {toast ? (
+          <View
+            style={[
+              styles.toast,
+              toast.tone === 'success' && styles.toastSuccess,
+              toast.tone === 'error' && styles.toastError,
+              toast.tone === 'info' && styles.toastInfo,
+            ]}
+          >
+            <Text style={styles.toastText}>{toast.message}</Text>
+          </View>
+        ) : null}
+      </SafeAreaView>
+    </Modal>
   );
 }
 
@@ -2585,20 +2598,24 @@ const styles = StyleSheet.create({
     padding: 16,
     width: '100%',
   },
+  toastOverlay: {
+    alignItems: 'center',
+    flex: 1,
+    justifyContent: 'flex-start',
+    paddingTop: 12,
+    zIndex: 10000,
+    elevation: 10000,
+  },
   toast: {
     alignSelf: 'center',
     borderRadius: 8,
     borderWidth: 1,
-    left: 0,
-    marginHorizontal: 'auto',
+    elevation: 10001,
     maxWidth: 560,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    position: 'absolute',
-    right: 0,
-    top: 12,
     width: '90%',
-    zIndex: 20,
+    zIndex: 10001,
   },
   toastSuccess: {
     backgroundColor: '#e7f6ed',

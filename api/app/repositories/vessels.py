@@ -89,7 +89,7 @@ def update_vessel_for_profile(
     if vessel is None:
         return None
 
-    update_data = payload.model_dump(exclude_unset=True, exclude={"identifiers"})
+    update_data = payload.model_dump(exclude_unset=True, exclude={"identifiers"}, mode="json")
     for field_name, value in update_data.items():
         setattr(vessel, field_name, value)
     vessel.version += 1
