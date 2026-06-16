@@ -28,6 +28,10 @@ type Vessel = {
   make?: string;
   model?: string;
   ownershipType: string;
+  ownerName?: string;
+  ownerContact?: string;
+  ownerEmail?: string;
+  ownerPhone?: string;
   lengthOverallInches?: number;
   beamInches?: number;
   draftInches?: number;
@@ -82,6 +86,9 @@ type VesselDraft = {
   ownershipType: string;
   make: string;
   model: string;
+  ownerName: string;
+  ownerEmail: string;
+  ownerPhone: string;
   registrationNumber: string;
   grossTons: string;
   lengthFeet: string;
@@ -301,6 +308,10 @@ function makeVesselPayload(draft: VesselDraft) {
     make: draft.make.trim() || null,
     model: draft.model.trim() || null,
     ownership_type: draft.ownershipType,
+    owner_name: draft.ownerName.trim() || null,
+    owner_email: draft.ownerEmail.trim() || null,
+    owner_phone: draft.ownerPhone.trim() || null,
+    owner_contact: [draft.ownerEmail.trim(), draft.ownerPhone.trim()].filter(Boolean).join(' / ') || null,
     length_overall_inches: inchesFromParts(draft.lengthFeet, draft.lengthInches),
     beam_inches: inchesFromParts(draft.beamFeet, draft.beamInches),
     draft_inches: inchesFromParts(draft.draftFeet, draft.draftInches),
@@ -322,6 +333,9 @@ function vesselToDraft(vessel?: Vessel | null): VesselDraft {
     ownershipType: vessel?.ownershipType ?? 'owned',
     make: vessel?.make ?? '',
     model: vessel?.model ?? '',
+    ownerName: vessel?.ownerName ?? '',
+    ownerEmail: vessel?.ownerEmail ?? '',
+    ownerPhone: vessel?.ownerPhone ?? '',
     registrationNumber: registration?.identifierValue ?? '',
     grossTons: vessel?.grossTons == null ? '' : vessel.grossTons.toString(),
     lengthFeet: length.feet,
@@ -350,8 +364,57 @@ function vesselNeedsOwnerSignature(vessel?: Vessel) {
   return vessel.ownershipType !== 'owned' && vessel.ownershipType !== 'unknown';
 }
 
-function tripHasMissingExportData(trip: Trip) {
-  return !trip.vesselId || !trip.waterBodyName || !trip.startedAt || !trip.endedAt || !trip.underwayHours;
+function primaryVesselIdentifier(vessel?: Vessel) {
+  return vessel?.identifiers?.find((identifier) => identifier.isPrimary) ?? vessel?.identifiers?.[0];
+}
+
+function getTripMissingExportFields(trip: Trip, vessel?: Vessel) {
+  const missing: string[] = [];
+
+  if (!trip.vesselId || !vessel) {
+    missing.push('Vessel');
+  }
+  if (!trip.waterBodyName?.trim()) {
+    missing.push('Water body');
+  }
+  if (trip.waterBodyType === 'unknown') {
+    missing.push('Waters type');
+  }
+  if (!trip.startedAt) {
+    missing.push('Start time');
+  }
+  if (!trip.endedAt) {
+    missing.push('End time');
+  }
+  if (trip.underwayHours == null || trip.underwayHours <= 0) {
+    missing.push('Underway hours');
+  }
+
+  if (vessel) {
+    if (!primaryVesselIdentifier(vessel)?.identifierValue) {
+      missing.push('Vessel registration');
+    }
+    if (vessel.lengthOverallInches == null) {
+      missing.push('Vessel length');
+    }
+    if (vessel.grossTons == null) {
+      missing.push('Gross tons');
+    }
+    if (vesselNeedsOwnerSignature(vessel)) {
+      if (!vessel.ownerName?.trim()) {
+        missing.push('Owner name');
+      }
+      if (!vessel.ownerEmail?.trim() && !vessel.ownerPhone?.trim()) {
+        missing.push('Owner email or phone');
+      }
+    }
+  }
+
+  return missing;
+}
+
+function tripHasMissingExportData(trip: Trip, vessel?: Vessel) {
+  return getTripMissingExportFields(trip, vessel).length > 0;
 }
 
 const trendRangeOptions: { key: TrendRange; label: string }[] = [
@@ -524,7 +587,6 @@ function buildLineChartStyle(buckets: { label: string; outings: number }[]): CSS
         <polyline fill="#dbeff1" fill-opacity="0.85" stroke="none" points="${area}" />
         <polyline fill="none" stroke="#176b75" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" points="${polyline}" />
         ${circles}
-        <text x="${paddingX}" y="${height - 5}" fill="#557174" font-size="12" font-family="Arial">Outings per period</text>
       </svg>`,
     )}")`,
     backgroundPosition: 'center',
@@ -559,10 +621,18 @@ const initialVessels: Vessel[] = [
     name: 'Sea Trial',
     displayName: 'Sea Trial',
     ownershipType: 'owned',
+    ownerName: 'SeaDays Tester',
     lengthOverallInches: 264,
+    grossTons: 5,
     beamInches: 96,
     propulsionType: 'outboard',
-    identifiers: [],
+    identifiers: [
+      {
+        identifierType: 'state_registration',
+        identifierValue: 'TX-1234-AB',
+        isPrimary: true,
+      },
+    ],
   },
 ];
 
@@ -743,6 +813,10 @@ function mapVessel(row: Record<string, unknown>): Vessel {
     make: row.make ? String(row.make) : undefined,
     model: row.model ? String(row.model) : undefined,
     ownershipType: String(row.ownership_type ?? 'unknown'),
+    ownerName: row.owner_name ? String(row.owner_name) : undefined,
+    ownerContact: row.owner_contact ? String(row.owner_contact) : undefined,
+    ownerEmail: row.owner_email ? String(row.owner_email) : undefined,
+    ownerPhone: row.owner_phone ? String(row.owner_phone) : undefined,
     lengthOverallInches: row.length_overall_inches == null ? undefined : Number(row.length_overall_inches),
     beamInches: row.beam_inches == null ? undefined : Number(row.beam_inches),
     draftInches: row.draft_inches == null ? undefined : Number(row.draft_inches),
@@ -917,6 +991,10 @@ class MockRepository implements Repository {
       make: draft.make.trim() || undefined,
       model: draft.model.trim() || undefined,
       ownershipType: draft.ownershipType,
+      ownerName: draft.ownerName.trim() || undefined,
+      ownerContact: [draft.ownerEmail.trim(), draft.ownerPhone.trim()].filter(Boolean).join(' / ') || undefined,
+      ownerEmail: draft.ownerEmail.trim() || undefined,
+      ownerPhone: draft.ownerPhone.trim() || undefined,
       lengthOverallInches: inchesFromParts(draft.lengthFeet, draft.lengthInches),
       beamInches: inchesFromParts(draft.beamFeet, draft.beamInches),
       draftInches: inchesFromParts(draft.draftFeet, draft.draftInches),
@@ -1225,7 +1303,10 @@ function Dashboard({ repository, onSignOut }: { repository: Repository; onSignOu
       .reduce((sum, trip) => sum + trip.dayCount, 0);
     const lastTrip = [...trips].sort((a, b) => b.tripDate.localeCompare(a.tripDate))[0];
     const qualifyingRate = percent(totalDays, totalEntries);
-    const missingDataCount = trips.filter(tripHasMissingExportData).length;
+    const missingDataCount = trips.filter((trip) => {
+      const vessel = vessels.find((item) => item.id === trip.vesselId);
+      return tripHasMissingExportData(trip, vessel);
+    }).length;
     const signatureNeededCount = trips.filter((trip) => {
       const vessel = vessels.find((item) => item.id === trip.vesselId);
       return vesselNeedsOwnerSignature(vessel);
@@ -1550,12 +1631,9 @@ function TrendChart({ trips }: { trips: Trip[] }) {
           ? createElement('div', { style: lineStyle })
           : <View style={styles.lineFallback} />}
       </View>
-      <View style={styles.trendLabels}>
+      <View style={styles.trendAxisLabels}>
         {labelSample.map((bucket) => (
-          <View key={bucket.label} style={styles.trendLabelItem}>
-            <Text style={styles.trendLabel}>{bucket.label}</Text>
-            <Text style={styles.trendValue}>{bucket.outings} outing{bucket.outings === 1 ? '' : 's'}</Text>
-          </View>
+          <Text key={bucket.label} style={styles.trendAxisLabel}>{bucket.label}</Text>
         ))}
       </View>
     </View>
@@ -1626,7 +1704,10 @@ function LogsPage({
   onEdit: (trip: Trip) => void;
 }) {
   const qualifying = trips.filter((trip) => trip.dayCount > 0).length;
-  const missing = trips.filter(tripHasMissingExportData).length;
+  const missing = trips.filter((trip) => {
+    const vessel = vessels.find((item) => item.id === trip.vesselId);
+    return tripHasMissingExportData(trip, vessel);
+  }).length;
 
   return (
     <View style={styles.tabPage}>
@@ -1650,32 +1731,71 @@ function LogsPage({
       {loading ? <ActivityIndicator color="#176b75" /> : null}
       {!loading && trips.length === 0 ? <Text style={styles.emptyText}>No trips yet.</Text> : null}
 
-      {trips.map((trip) => (
-        <TripListRow
-          key={trip.id}
-          trip={trip}
-          vessel={vessels.find((item) => item.id === trip.vesselId)}
-          onPress={() => onEdit(trip)}
-        />
-      ))}
+      {trips.map((trip) => {
+        const vessel = vessels.find((item) => item.id === trip.vesselId);
+        return (
+          <TripListRow
+            key={trip.id}
+            trip={trip}
+            vessel={vessel}
+            missingFields={getTripMissingExportFields(trip, vessel)}
+            onPress={() => onEdit(trip)}
+          />
+        );
+      })}
     </View>
   );
 }
 
-function TripListRow({ trip, vessel, onPress }: { trip: Trip; vessel?: Vessel; onPress: () => void }) {
+function TripListRow({
+  trip,
+  vessel,
+  missingFields,
+  onPress,
+}: {
+  trip: Trip;
+  vessel?: Vessel;
+  missingFields: string[];
+  onPress: () => void;
+}) {
+  const needsReview = missingFields.length > 0;
+
   return (
-    <Pressable style={styles.tripRow} onPress={onPress}>
+    <Pressable style={[styles.tripRow, needsReview && styles.tripRowNeedsReview]} onPress={onPress}>
       <View style={styles.tripIcon}>
-        <MaterialCommunityIcons name="sail-boat" size={22} color="#176b75" />
+        <MaterialCommunityIcons
+          name={needsReview ? 'alert-circle-outline' : 'sail-boat'}
+          size={22}
+          color={needsReview ? '#a25b17' : '#176b75'}
+        />
       </View>
       <View style={styles.tripBody}>
-        <Text style={styles.tripTitle}>{vessel?.displayName ?? vessel?.name ?? 'Unknown vessel'}</Text>
+        <View style={styles.tripTitleRow}>
+          <Text style={styles.tripTitle}>{vessel?.displayName ?? vessel?.name ?? 'Unknown vessel'}</Text>
+          {needsReview ? (
+            <View style={styles.reviewBadge}>
+              <Text style={styles.reviewBadgeText}>Needs review</Text>
+            </View>
+          ) : null}
+        </View>
         <Text style={styles.tripMeta}>
           {trip.tripDate} - {roleLabels[trip.serviceRole]} - {waterTypeLabels[trip.waterBodyType]}
         </Text>
         <Text style={styles.tripMeta}>
           {trip.waterBodyName || 'No water body'} - {(trip.underwayHours ?? 0).toFixed(1)} hours
         </Text>
+        {needsReview ? (
+          <View style={styles.missingInfoBox}>
+            <Text style={styles.missingInfoTitle}>Missing for export</Text>
+            <View style={styles.missingChipRow}>
+              {missingFields.map((field) => (
+                <View key={field} style={styles.missingChip}>
+                  <Text style={styles.missingChipText}>{field}</Text>
+                </View>
+              ))}
+            </View>
+          </View>
+        ) : null}
       </View>
       <View style={styles.tripActionColumn}>
         <Text style={styles.dayCount}>{trip.dayCount.toFixed(1)} d</Text>
@@ -1856,6 +1976,9 @@ function VesselsPage({
             <Text style={styles.tripMeta}>
               {vessel.make || 'Unknown make'} {vessel.model || ''} - LOA {formatFeetAndInches(vessel.lengthOverallInches)}
             </Text>
+            <Text style={styles.tripMeta}>
+              Owner: {vessel.ownerName || (vessel.ownershipType === 'owned' ? 'User-owned' : 'Not set')}
+            </Text>
           </View>
           <Pressable style={styles.iconButtonSmall} onPress={() => onEdit(vessel)}>
             <MaterialCommunityIcons name="pencil" size={18} color="#176b75" />
@@ -1867,7 +1990,7 @@ function VesselsPage({
 }
 
 function VesselDetail({ vessel, onBack, onEdit }: { vessel: Vessel; onBack: () => void; onEdit: () => void }) {
-  const primaryIdentifier = vessel.identifiers?.find((identifier) => identifier.isPrimary) ?? vessel.identifiers?.[0];
+  const primaryIdentifier = primaryVesselIdentifier(vessel);
 
   return (
     <View style={styles.tabPage}>
@@ -1887,6 +2010,9 @@ function VesselDetail({ vessel, onBack, onEdit }: { vessel: Vessel; onBack: () =
 
       <View style={styles.detailGrid}>
         <DetailItem label="Ownership" value={ownershipLabels[vessel.ownershipType] ?? vessel.ownershipType} />
+        <DetailItem label="Owner" value={vessel.ownerName || 'Not set'} />
+        <DetailItem label="Owner email" value={vessel.ownerEmail || 'Not set'} />
+        <DetailItem label="Owner phone" value={vessel.ownerPhone || 'Not set'} />
         <DetailItem label="Propulsion" value={propulsionLabels[vessel.propulsionType] ?? vessel.propulsionType} />
         <DetailItem label="Registration" value={primaryIdentifier?.identifierValue ?? 'Not set'} />
         <DetailItem label="Gross tons" value={vessel.grossTons == null ? 'Not set' : vessel.grossTons.toString()} />
@@ -2174,6 +2300,33 @@ function VesselModal({
               options={ownershipLabels}
               onChange={(value) => setField('ownershipType', value)}
             />
+            <View style={styles.ownerFieldGroup}>
+              <Text style={styles.fieldGroupTitle}>Owner contact</Text>
+              <Text style={styles.fieldGroupHint}>
+                Used later for owner signature requests when this is not your vessel.
+              </Text>
+              <LabeledInput
+                label="Owner name"
+                value={draft.ownerName}
+                onChangeText={(value) => setField('ownerName', value)}
+                placeholder="Optional"
+              />
+              <View style={styles.twoColumn}>
+                <LabeledInput
+                  label="Owner email"
+                  value={draft.ownerEmail}
+                  onChangeText={(value) => setField('ownerEmail', value)}
+                  keyboardType="email-address"
+                  placeholder="Optional"
+                />
+                <LabeledInput
+                  label="Owner phone"
+                  value={draft.ownerPhone}
+                  onChangeText={(value) => setField('ownerPhone', value)}
+                  placeholder="Optional"
+                />
+              </View>
+            </View>
             <SegmentedOptions
               label="Propulsion"
               value={draft.propulsionType}
@@ -2726,28 +2879,16 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     height: 170,
   },
-  trendLabels: {
+  trendAxisLabels: {
+    alignItems: 'center',
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
+    justifyContent: 'space-between',
     marginTop: 10,
   },
-  trendLabelItem: {
-    backgroundColor: '#edf5f5',
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 6,
-  },
-  trendLabel: {
+  trendAxisLabel: {
     color: '#557174',
     fontSize: 11,
-    fontWeight: '800',
-  },
-  trendValue: {
-    color: '#092f35',
-    fontSize: 12,
-    fontWeight: '900',
-    marginTop: 2,
+    fontWeight: '700',
   },
   breakdownRow: {
     marginTop: 10,
@@ -2998,6 +3139,10 @@ const styles = StyleSheet.create({
     gap: 12,
     padding: 14,
   },
+  tripRowNeedsReview: {
+    backgroundColor: '#fffaf1',
+    borderColor: '#e2b86c',
+  },
   vesselRow: {
     alignItems: 'center',
     backgroundColor: '#ffffff',
@@ -3028,10 +3173,61 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '800',
   },
+  tripTitleRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  reviewBadge: {
+    backgroundColor: '#f5d28d',
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  reviewBadgeText: {
+    color: '#6d430a',
+    fontSize: 11,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
   tripMeta: {
     color: '#5c7376',
     fontSize: 13,
     marginTop: 2,
+  },
+  missingInfoBox: {
+    backgroundColor: '#fff3d9',
+    borderColor: '#e7c47d',
+    borderRadius: 8,
+    borderWidth: 1,
+    marginTop: 10,
+    padding: 10,
+  },
+  missingInfoTitle: {
+    color: '#6d430a',
+    fontSize: 12,
+    fontWeight: '900',
+    marginBottom: 8,
+    textTransform: 'uppercase',
+  },
+  missingChipRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+  },
+  missingChip: {
+    backgroundColor: '#ffffff',
+    borderColor: '#e2b86c',
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 8,
+    paddingVertical: 5,
+  },
+  missingChipText: {
+    color: '#7a4c0d',
+    fontSize: 12,
+    fontWeight: '800',
   },
   dayCount: {
     color: '#176b75',
@@ -3108,6 +3304,27 @@ const styles = StyleSheet.create({
     color: '#176b75',
     fontSize: 13,
     fontWeight: '800',
+  },
+  ownerFieldGroup: {
+    backgroundColor: '#f8fbf7',
+    borderColor: '#d7e4e5',
+    borderRadius: 8,
+    borderWidth: 1,
+    marginBottom: 14,
+    padding: 12,
+  },
+  fieldGroupTitle: {
+    color: '#103d43',
+    fontSize: 15,
+    fontWeight: '900',
+  },
+  fieldGroupHint: {
+    color: '#557174',
+    fontSize: 12,
+    fontWeight: '700',
+    lineHeight: 18,
+    marginBottom: 12,
+    marginTop: 3,
   },
   field: {
     flex: 1,

@@ -1,7 +1,7 @@
 from typing import Optional
 from uuid import UUID
 
-from pydantic import Field, field_validator
+from pydantic import EmailStr, Field, field_validator
 
 from app.domain.options import (
     OWNERSHIP_TYPES,
@@ -39,6 +39,8 @@ class VesselCreate(ApiModel):
     ownership_type: str = "unknown"
     owner_name: Optional[str] = Field(default=None, max_length=120)
     owner_contact: Optional[str] = Field(default=None, max_length=200)
+    owner_email: Optional[EmailStr] = None
+    owner_phone: Optional[str] = Field(default=None, max_length=40)
     length_overall_inches: Optional[int] = Field(default=None, ge=0)
     beam_inches: Optional[int] = Field(default=None, ge=0)
     draft_inches: Optional[int] = Field(default=None, ge=0)
@@ -68,4 +70,3 @@ class VesselRead(VesselCreate):
     created_by_profile_id: UUID
     version: int
     identifiers: list[VesselIdentifierRead] = Field(default_factory=list)
-

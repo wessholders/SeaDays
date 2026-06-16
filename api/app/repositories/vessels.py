@@ -44,6 +44,8 @@ def create_vessel_for_profile(db: Session, profile_id: UUID, payload: VesselCrea
         ownership_type=payload.ownership_type,
         owner_name=payload.owner_name,
         owner_contact=payload.owner_contact,
+        owner_email=str(payload.owner_email) if payload.owner_email else None,
+        owner_phone=payload.owner_phone,
         length_overall_inches=payload.length_overall_inches,
         beam_inches=payload.beam_inches,
         draft_inches=payload.draft_inches,

@@ -66,6 +66,8 @@ create table vessels (
   ownership_type text not null default 'unknown',
   owner_name text,
   owner_contact text,
+  owner_email text,
+  owner_phone text,
   length_overall_inches integer,
   beam_inches integer,
   draft_inches integer,

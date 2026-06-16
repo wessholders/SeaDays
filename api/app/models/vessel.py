@@ -30,6 +30,8 @@ class Vessel(Base):
     ownership_type: Mapped[str] = mapped_column(Text, nullable=False, default="unknown")
     owner_name: Mapped[Optional[str]] = mapped_column(Text)
     owner_contact: Mapped[Optional[str]] = mapped_column(Text)
+    owner_email: Mapped[Optional[str]] = mapped_column(Text)
+    owner_phone: Mapped[Optional[str]] = mapped_column(Text)
     length_overall_inches: Mapped[Optional[int]] = mapped_column(Integer)
     beam_inches: Mapped[Optional[int]] = mapped_column(Integer)
     draft_inches: Mapped[Optional[int]] = mapped_column(Integer)

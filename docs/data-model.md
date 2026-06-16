@@ -38,6 +38,8 @@ Sensitive fields should be optional and added only when needed for export workfl
 - `ownership_type`
 - `owner_name`
 - `owner_contact`
+- `owner_email`
+- `owner_phone`
 - `length_overall_inches`
 - `beam_inches`
 - `draft_inches`

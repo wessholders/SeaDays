@@ -47,7 +47,7 @@ Official template reference: https://www.dco.uscg.mil/Portals/9/NMC/pdfs/forms/C
 
 - Checks whether each vessel packet is ready.
 - Returns missing fields, warnings, and blocking errors for the UI.
-- Examples: missing legal name, missing vessel identifier, missing gross tons, missing water body, missing owner contact for non-owned vessel.
+- Examples: missing legal name, missing vessel identifier, missing gross tons, missing water body, missing owner name, or missing owner email/phone for a non-owned vessel.
 
 `OwnerAttestationWorkflow`
 
